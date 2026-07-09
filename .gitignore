@@ -1,0 +1,12 @@
+.cohesivity
+.env
+.env.local
+.env*.local
+output/
+__pycache__/
+*.pyc
+web/node_modules/
+web/.next/
+web/out/
+*.log
+.DS_Store

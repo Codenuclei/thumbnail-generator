@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Thumbnail Generator</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root { --bg:#0a0a0f; --surface:#14141f; --border:#2a2a3a; --text:#f0f0f5; --muted:#8888a0; --accent:#ff4444; --accent2:#ffd500; }
+    body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+    main { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+    header h1 { font-size: 1.75rem; font-weight: 800; }
+    header h1 span { color: var(--accent2); }
+    header p { color: var(--muted); margin-top: 0.5rem; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
+    @media (max-width:768px) { .grid { grid-template-columns: 1fr; } }
+    .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; }
+    .panel h2 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 1.25rem; }
+    label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.4rem; color: var(--muted); }
+    input, select, textarea { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); padding: 0.75rem 1rem; font-size: 0.95rem; margin-bottom: 1rem; }
+    button.generate { width: 100%; background: linear-gradient(135deg, var(--accent), #cc2200); color: white; border: none; border-radius: 8px; padding: 0.9rem; font-size: 1rem; font-weight: 700; cursor: pointer; }
+    button.generate:disabled { opacity: 0.5; cursor: not-allowed; }
+    .preview-area { aspect-ratio: 16/9; background: var(--bg); border: 2px dashed var(--border); border-radius: 8px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+    .preview-area img { width: 100%; height: 100%; object-fit: cover; }
+    .placeholder { color: var(--muted); text-align: center; padding: 2rem; }
+    .error { background: #2a1010; border: 1px solid #662222; color: #ff8888; border-radius: 8px; padding: 0.75rem; margin-top: 1rem; font-size: 0.85rem; word-break: break-word; }
+    .meta { margin-top: 1rem; font-size: 0.8rem; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
+    .download-btn { background: transparent; border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 0.4rem 0.8rem; cursor: pointer; }
+    .spinner { width: 40px; height: 40px; border: 3px solid var(--border); border-top-color: var(--accent2); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 1rem; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .chips { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1.5rem; }
+    .chip { background: var(--bg); border: 1px solid var(--border); border-radius: 20px; padding: 0.3rem 0.75rem; font-size: 0.78rem; color: var(--muted); }
+    .chip strong { color: var(--accent2); }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Thumbnail <span>Generator</span></h1>
+      <p>Channel style from 21 reference thumbnails. Gemini first, GPT fallback.</p>
+    </header>
+    <div class="grid">
+      <div class="panel">
+        <h2>Create</h2>
+        <form id="form">
+          <label>Video topic</label>
+          <textarea id="topic" placeholder="e.g. India vs Japan bullet train" required></textarea>
+          <label>Hook text</label>
+          <input id="hook" placeholder='e.g. "WHY INDIA LOST?"' />
+          <label>Composition</label>
+          <select id="composition">
+            <option value="">Auto</option>
+            <option value="center">Center hero</option>
+            <option value="split">Split comparison</option>
+            <option value="cutout">Cutout + scene</option>
+            <option value="data">Data overlay</option>
+          </select>
+          <label>Model</label>
+          <select id="model">
+            <option value="">Gemini 3.1 Flash Image</option>
+            <option value="gemini-3.1-flash-lite-image">Gemini 3.1 Flash Lite</option>
+            <option value="gemini-3-pro-image">Gemini 3 Pro Image</option>
+            <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image</option>
+          </select>
+          <button type="submit" class="generate" id="btn">Generate Thumbnail</button>
+        </form>
+        <div id="error" class="error" style="display:none"></div>
+        <div class="chips">
+          <div class="chip">Port: <strong>1382</strong></div>
+          <div class="chip">Format: <strong>16:9</strong></div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Preview</h2>
+        <div class="preview-area" id="preview">
+          <div class="placeholder">Your thumbnail will appear here</div>
+        </div>
+        <div class="meta" id="meta" style="display:none">
+          <span id="backend"></span>
+          <button type="button" class="download-btn" id="download">Download PNG</button>
+        </div>
+      </div>
+    </div>
+  </main>
+  <script>
+    const form = document.getElementById('form');
+    const preview = document.getElementById('preview');
+    const errorEl = document.getElementById('error');
+    const btn = document.getElementById('btn');
+    const meta = document.getElementById('meta');
+    const backendEl = document.getElementById('backend');
+    const downloadBtn = document.getElementById('download');
+    let imageData = null;
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorEl.style.display = 'none';
+      btn.disabled = true;
+      btn.textContent = 'Generating… (up to 60s)';
+      preview.innerHTML = '<div class="placeholder"><div class="spinner"></div>Generating…</div>';
+      meta.style.display = 'none';
+      imageData = null;
+
+      try {
+        const res = await fetch('/api/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            topic: document.getElementById('topic').value,
+            hook: document.getElementById('hook').value,
+            composition: document.getElementById('composition').value,
+            model: document.getElementById('model').value,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Generation failed');
+        imageData = 'data:image/png;base64,' + data.image;
+        preview.innerHTML = '<img src="' + imageData + '" alt="thumbnail" />';
+        backendEl.textContent = 'via ' + (data.backend || '');
+        meta.style.display = 'flex';
+      } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.style.display = 'block';
+        preview.innerHTML = '<div class="placeholder">Your thumbnail will appear here</div>';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Generate Thumbnail';
+      }
+    });
+
+    downloadBtn.addEventListener('click', () => {
+      if (!imageData) return;
+      const a = document.createElement('a');
+      a.href = imageData;
+      a.download = 'thumbnail-' + Date.now() + '.png';
+      a.click();
+    });
+  </script>
+</body>
+</html>
