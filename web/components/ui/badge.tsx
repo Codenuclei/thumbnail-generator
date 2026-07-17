@@ -5,16 +5,18 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
 const badgeVariants = cva(
-  "inline-flex h-6 w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-[9999px] border px-2.5 text-[12px] font-medium tracking-[-0.32px] whitespace-nowrap [&>svg]:size-3",
+  "inline-flex w-fit items-center justify-center gap-1 overflow-hidden rounded-[100px] border px-[9px] py-[6px] text-[12px] font-medium [&>svg]:size-3",
   {
     variants: {
       variant: {
-        default: "border-transparent bg-[#918df6] text-white",
-        secondary: "border-transparent bg-[#f5f5f5] text-[#666666]",
-        destructive: "border-transparent bg-[#ff3e00]/10 text-[#ff3e00]",
-        outline: "border-[#e8e8e8] bg-white text-[#181925]",
-        ghost: "border-transparent text-[#666666]",
-        link: "border-transparent text-[#918df6]",
+        default: "border-transparent bg-[#e7e0fe] text-[#38296c]",
+        secondary: "border-transparent bg-[#f7f7f7] text-[#727578]",
+        destructive: "border-transparent bg-[#fff1ec] text-[#772914]",
+        outline: "border-[#efefef] bg-white text-[#171618]",
+        ghost: "border-transparent text-[#727578]",
+        link: "border-transparent text-[#38296c]",
+        teal: "border-transparent bg-[#cfeff8] text-[#004d60]",
+        amber: "border-transparent bg-[#feedcc] text-[#412e0a]",
       },
     },
     defaultVariants: {

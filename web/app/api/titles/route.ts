@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { suggestTitlesFromFeedback } from "@/lib/title-suggestions";
 import type { ThumbnailFeedback } from "@/lib/inspiration";
 
-export const maxDuration = 30;
+export const maxDuration = 45;
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {

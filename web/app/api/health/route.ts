@@ -1,9 +1,15 @@
 import { NextResponse } from "next/server";
+import { youtubeYtdlpReady } from "@/lib/youtube-download";
+import { runtimeEnv } from "@/lib/runtime-env";
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 export async function GET() {
-  const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-  const cohesivityKey = process.env.COH_APPLICATION_KEY;
-  const apifyToken = process.env.APIFY_API_TOKEN;
+  const geminiKey = runtimeEnv("GEMINI_API_KEY") || runtimeEnv("GOOGLE_API_KEY");
+  const cohesivityKey = runtimeEnv("COH_APPLICATION_KEY");
+  const apifyToken = runtimeEnv("APIFY_API_TOKEN");
+  const ytdlp = await youtubeYtdlpReady();
 
   let geminiText = false;
   let geminiError = "";
@@ -31,14 +37,27 @@ export async function GET() {
     }
   }
 
-  return NextResponse.json({
-    gemini: {
-      configured: Boolean(geminiKey),
-      textOk: geminiText,
-      imageModel: "gemini-2.5-flash-image",
-      error: geminiError || undefined,
+  return NextResponse.json(
+    {
+      gemini: {
+        configured: Boolean(geminiKey),
+        textOk: geminiText,
+        imageModel: "gemini-2.5-flash-image",
+        error: geminiError || undefined,
+      },
+      cohesivity: { configured: Boolean(cohesivityKey) },
+      ytdlp,
+      apify: { configured: Boolean(apifyToken) },
+      exports: {
+        canva: Boolean(cohesivityKey),
+        figma: Boolean(cohesivityKey),
+        canvaOAuth: Boolean(runtimeEnv("CANVA_CLIENT_ID") && runtimeEnv("CANVA_CLIENT_SECRET")),
+        figmaOAuth: Boolean(
+          (runtimeEnv("FIGMA_CLIENT_ID") && runtimeEnv("FIGMA_CLIENT_SECRET")) ||
+            runtimeEnv("FIGMA_ACCESS_TOKEN")
+        ),
+      },
     },
-    cohesivity: { configured: Boolean(cohesivityKey) },
-    apify: { configured: Boolean(apifyToken) },
-  });
+    { headers: { "Cache-Control": "no-store" } }
+  );
 }

@@ -1,4 +1,5 @@
 import type { InspirationVideo } from "@/lib/inspiration";
+import { filterOutShorts, isYouTubeShort } from "@/lib/shorts-filter";
 
 export type { InspirationVideo } from "@/lib/inspiration";
 export { formatViews } from "@/lib/inspiration";
@@ -171,24 +172,39 @@ function extractInnerTubeVideos(payload: unknown): InspirationVideo[] {
 
     if (record.videoRenderer && typeof record.videoRenderer === "object") {
       const v = record.videoRenderer as Record<string, unknown>;
+
+      // Shorts use shortViewCountText — regular videos use viewCountText
+      if (v.shortViewCountText) return;
+
       const videoId = String(v.videoId || "");
       const titleRuns = (v.title as { runs?: Array<{ text?: string }> })?.runs;
       const title =
         titleRuns?.[0]?.text ||
         (v.title as { simpleText?: string })?.simpleText ||
         "Untitled";
-      const channelRuns =
-        (v.ownerText as { runs?: Array<{ text?: string }> })?.runs ||
-        (v.shortBylineText as { runs?: Array<{ text?: string }> })?.runs;
-      const channel = channelRuns?.[0]?.text || "Unknown channel";
+      const ownerRuns = (v.ownerText as { runs?: Array<{ text?: string }> })?.runs;
+      const shortByline = (v.shortBylineText as { runs?: Array<{ text?: string }> })?.runs;
+      if (shortByline?.length && !ownerRuns?.length) return;
+
+      const channel = ownerRuns?.[0]?.text || shortByline?.[0]?.text || "Unknown channel";
       const viewsText =
-        (v.viewCountText as { simpleText?: string })?.simpleText ||
-        (v.shortViewCountText as { simpleText?: string })?.simpleText ||
-        "0";
+        (v.viewCountText as { simpleText?: string })?.simpleText || "0";
       const thumbs = (v.thumbnail as { thumbnails?: Array<{ url?: string }> })?.thumbnails;
       const thumbnailUrl = thumbs?.[thumbs.length - 1]?.url || "";
+      const lengthText = (v.lengthText as { simpleText?: string })?.simpleText;
+      const url = `https://www.youtube.com/watch?v=${videoId}`;
 
-      if (videoId && thumbnailUrl) {
+      if (
+        videoId &&
+        thumbnailUrl &&
+        !isYouTubeShort({
+          videoId,
+          title,
+          url,
+          duration: lengthText,
+          thumbnailUrl,
+        })
+      ) {
         found.push({
           videoId,
           title,
@@ -198,6 +214,9 @@ function extractInnerTubeVideos(payload: unknown): InspirationVideo[] {
         });
       }
     }
+
+    // Never ingest Shorts shelf / reel renderers
+    if (record.reelItemRenderer || record.shortsLockupViewModel) return;
 
     if (Array.isArray(node)) {
       node.forEach(walk);
@@ -232,7 +251,7 @@ export async function searchInnerTube(query: string): Promise<InspirationVideo[]
   );
 
   if (!res.ok) throw new Error(`YouTube search failed (${res.status})`);
-  return extractInnerTubeVideos(await res.json());
+  return filterOutShorts(extractInnerTubeVideos(await res.json()));
 }
 
 async function searchPiped(query: string): Promise<InspirationVideo[]> {

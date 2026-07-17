@@ -1,4 +1,5 @@
 import type { ScrapedVideo } from "@/lib/apify-youtube";
+import { runtimeEnv } from "@/lib/runtime-env";
 
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const ANALYSIS_MODEL = "gemini-2.5-flash";
@@ -21,7 +22,7 @@ export async function analyzeStyleWithGemini(
   videos: ScrapedVideo[],
   hook?: string
 ): Promise<StyleBrief> {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  const apiKey = runtimeEnv("GEMINI_API_KEY") || runtimeEnv("GOOGLE_API_KEY");
   if (!apiKey) {
     return fallbackBrief(topic, videos, hook);
   }
@@ -47,11 +48,13 @@ Return ONLY valid JSON with this shape:
   "composition": "layout and subject placement rules",
   "emotionalHook": "dominant emotion to convey",
   "textPatterns": ["short hook patterns observed"],
-  "creativeDirection": "one paragraph art direction for a new thumbnail",
+  "creativeDirection": "one paragraph art direction using camera-real language (lens, lighting, grain) — never hyperrealistic/8k/unreal engine/masterpiece",
   "doList": ["5 specific do's"],
-  "avoidList": ["5 specific don'ts"],
+  "avoidList": ["5 specific don'ts including AI-slop looks: CGI gloss, plastic skin, glowing HUD, perfect symmetry"],
   "suggestedHook": "3-5 word ALL CAPS hook if none provided"
-}`;
+}
+
+Important: describe visuals as real photography (35mm, natural light, film grain), not as AI renders.`;
 
   const res = await fetch(`${GEMINI_API_BASE}/${ANALYSIS_MODEL}:generateContent`, {
     method: "POST",
@@ -94,10 +97,10 @@ function fallbackBrief(topic: string, _videos: ScrapedVideo[], hook?: string): S
     emotionalHook: "Optimistic, authoritative, premium",
     textPatterns: ["HOW IT'S MADE", "INSIDE THE FACTORY", "THE PROCESS"],
     creativeDirection:
-      "Polished business-documentary thumbnail: bright optimistic grade, sharp factory/process imagery, one confident hook, trustworthy brand feel.",
+      "Business-documentary still: Canon EOS R5, 35mm, natural window or practical factory light, Kodak Portra 400 response, minor film grain, real industrial grit, one confident hook — photographed on location, not CGI.",
     doList: [
-      "Premium business polish",
-      "Optimistic bright grade",
+      "Camera-real documentary look",
+      "Natural or practical lighting only",
       "One clear professional hook",
       "Clean uncluttered layout",
       "Mobile-readable text",
@@ -106,8 +109,8 @@ function fallbackBrief(topic: string, _videos: ScrapedVideo[], hook?: string): S
       "Cheap clickbait",
       "Shock/negative faces",
       "Cluttered collage",
-      "Muddy low contrast",
-      "Amateur typography",
+      "AI-slop CGI gloss / unreal engine look",
+      "Glowing HUD / plastic over-smoothed surfaces",
     ],
     suggestedHook: hook?.toUpperCase() || "HOW IT'S MADE",
   };

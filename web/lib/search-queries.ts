@@ -1,4 +1,5 @@
 import type { InspirationVideo, ThumbnailFeedback } from "@/lib/inspiration";
+import { runtimeEnv } from "@/lib/runtime-env";
 
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const QUERY_MODEL = "gemini-2.5-flash";
@@ -41,7 +42,7 @@ export async function expandQueriesFromFeedback(input: {
   seed?: Pick<InspirationVideo, "title" | "channel">;
   feedback: ThumbnailFeedback[];
 }): Promise<string[]> {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  const apiKey = runtimeEnv("GEMINI_API_KEY") || runtimeEnv("GOOGLE_API_KEY");
   const liked = input.feedback.filter((f) => f.rating === "like");
   const notes = input.feedback
     .filter((f) => f.comment || f.rating === "like")

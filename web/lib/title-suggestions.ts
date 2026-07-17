@@ -1,3 +1,5 @@
+import { runtimeEnv } from "@/lib/runtime-env";
+
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const MODEL = "gemini-2.5-flash";
 
@@ -8,7 +10,7 @@ export async function suggestTitlesFromFeedback(input: {
   dislikedTitles: string[];
   existingSuggestions?: string[];
 }): Promise<string[]> {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  const apiKey = runtimeEnv("GEMINI_API_KEY") || runtimeEnv("GOOGLE_API_KEY");
   if (!apiKey) {
     return input.existingSuggestions?.slice(0, 4) || [input.topic];
   }
@@ -42,7 +44,7 @@ Return ONLY JSON: { "titles": ["title 1", "title 2", ...] }`;
         contents: [{ role: "user", parts: [{ text: prompt }] }],
         generationConfig: { temperature: 0.35, maxOutputTokens: 800 },
       }),
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(25_000),
     });
 
     if (!res.ok) throw new Error("titles api fail");

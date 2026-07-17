@@ -35,15 +35,15 @@ const COPY: Record<
 > = {
   like: {
     title: "What works here?",
-    description: "Note composition, colors, hook text, or energy you want to keep.",
+    description: "Optional — note composition, colors, or energy to keep. Like is already saved.",
     placeholder: "e.g. bold hook left, warm factory glow, face cutout pops…",
-    confirm: "Save like",
+    confirm: "Save note",
   },
   dislike: {
     title: "What’s off?",
-    description: "Tell the pipeline what to avoid in similar results.",
+    description: "Optional — tell the pipeline what to avoid. Dislike is already saved.",
     placeholder: "e.g. too cluttered, cheap stock look, wrong niche…",
-    confirm: "Save dislike",
+    confirm: "Save note",
   },
   explore: {
     title: "Explore similar",
@@ -64,49 +64,49 @@ export function FeedbackDialog({
   onExplore,
 }: Props) {
   const [comment, setComment] = useState(initialComment);
+  const activeMode = mode || "like";
+  const copy = COPY[activeMode];
 
   useEffect(() => {
     if (open) setComment(initialComment);
   }, [open, initialComment, item?.videoId, mode]);
 
-  if (!mode || !item) return null;
-
-  const copy = COPY[mode];
-
   function handleConfirm() {
-    if (mode === "explore") onExplore(comment.trim());
+    if (activeMode === "explore") onExplore(comment.trim());
     else onSave(comment.trim());
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open && Boolean(mode && item)} onOpenChange={onOpenChange}>
       <DialogContent
-        className="gap-5 rounded-[16px] border border-[#e8e8e8] bg-white p-6 shadow-[var(--shadow-subtle-3)] sm:max-w-lg"
+        className="gap-5 rounded-[16px] border border-[#efefef] bg-white p-6 shadow-[var(--shadow-subtle-3)] sm:max-w-lg"
         showCloseButton
       >
         <DialogHeader className="gap-2 pr-8">
-          <DialogTitle className="type-subheading text-[#181925]">{copy.title}</DialogTitle>
-          <DialogDescription className="type-ui font-normal text-[#666666]">
+          <DialogTitle className="type-subheading text-[#171618]">{copy.title}</DialogTitle>
+          <DialogDescription className="type-ui font-normal text-[#727578]">
             {copy.description}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex gap-3 rounded-[12px] border border-[#e8e8e8] bg-[#fafafa] p-3">
-          <img
-            src={item.thumbnailUrl}
-            alt={item.title}
-            className="aspect-video w-[112px] shrink-0 rounded-[8px] object-cover"
-          />
-          <div className="min-w-0 flex-1">
-            <p className="truncate type-ui text-[#181925]">{item.channel}</p>
-            <p className="mt-0.5 line-clamp-2 type-ui font-normal text-[#666666]">
-              {item.title}
-            </p>
-            <p className="mt-1 type-caption text-[#999999]">
-              {formatViews(item.viewCount)}
-            </p>
+        {item && (
+          <div className="flex gap-3 rounded-[12px] border border-[#efefef] bg-[#f7f7f7] p-3">
+            <img
+              src={item.thumbnailUrl}
+              alt={item.title}
+              className="aspect-video w-[112px] shrink-0 rounded-[8px] object-cover"
+            />
+            <div className="min-w-0 flex-1">
+              <p className="truncate type-ui text-[#171618]">{item.channel}</p>
+              <p className="mt-0.5 line-clamp-2 type-ui font-normal text-[#727578]">
+                {item.title}
+              </p>
+              <p className="mt-1 type-caption text-[#727578]">
+                {formatViews(item.viewCount)}
+              </p>
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="space-y-2">
           <Label htmlFor="feedback-comment">Your notes</Label>
@@ -122,12 +122,12 @@ export function FeedbackDialog({
 
         <DialogFooter className="gap-2 sm:justify-between">
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={exploring}>
-            Cancel
+            {activeMode === "explore" ? "Cancel" : "Skip"}
           </Button>
           <Button onClick={handleConfirm} disabled={exploring}>
-            {mode === "like" && <ThumbsUp className="size-4" />}
-            {mode === "dislike" && <ThumbsDown className="size-4" />}
-            {mode === "explore" && <Compass className="size-4" />}
+            {activeMode === "like" && <ThumbsUp className="size-4" />}
+            {activeMode === "dislike" && <ThumbsDown className="size-4" />}
+            {activeMode === "explore" && <Compass className="size-4" />}
             {exploring ? "Searching…" : copy.confirm}
           </Button>
         </DialogFooter>

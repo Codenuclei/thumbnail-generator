@@ -1,19 +1,23 @@
 import type { InspirationVideo } from "@/lib/inspiration";
 
 const STYLE_CONTEXT =
-  "This channel has 21 reference thumbnails. Collective style DNA: photoreal cinematic 16:9 YouTube thumbnails; recurring young Indian woman (or bearded man with glasses) with exaggerated emotional expressions; bold ALL-CAPS sans-serif text in yellow/red/white with thick outlines; curiosity-gap hooks and shock stats; split-screen comparisons for contrasts; India-focused documentary/explainer topics; small corner logo badges; red/yellow curved annotation arrows; desaturated moody grade for serious topics, vivid saturated grade for shock/comparison.";
+  "This channel has 21 reference thumbnails. Collective style DNA: real-camera 16:9 YouTube thumbnails (Canon EOS R5 / 35mm feel); recurring young Indian woman (or bearded man with glasses) with strong but natural emotional expressions; bold ALL-CAPS sans-serif text in yellow/red/white with thick outlines; curiosity-gap hooks and shock stats; split-screen comparisons for contrasts; India-focused documentary/explainer topics; small corner logo badges; red/yellow curved annotation arrows; desaturated moody grade for serious topics, vivid but photographic grade for shock/comparison — never CGI gloss.";
 
 const STYLE_SUFFIX =
-  "YouTube thumbnail, 16:9 landscape, photorealistic cinematic, a young Indian woman with a strong emotional facial expression as the focal subject, high contrast dramatic color grade, bold ALL-CAPS heavy sans-serif text with thick outline in yellow/red/white, short punchy curiosity-gap hook, small channel logo badge in a corner, professional YouTube documentary thumbnail composition, ultra sharp, eye-catching.";
+  "YouTube thumbnail, 16:9 landscape, shot like documentary still photography: natural window lighting or practical location light, shallow depth of field, minor film grain, imperfect skin texture; a young Indian woman with a strong emotional facial expression as the focal subject; high-contrast but camera-real color grade; bold ALL-CAPS heavy sans-serif text with thick outline in yellow/red/white; short punchy curiosity-gap hook; small channel logo badge in a corner. Avoid hyperrealistic / 8k / unreal engine / masterpiece / highly detailed AI-slop language and look.";
 
 const QUALITY_DIRECTIVES =
-  "Design rules for maximum click-through: keep the layout clean and uncluttered; one dominant text hook only (2-4 words max), highly readable at phone size; subject face fills roughly one-third of the frame with exaggerated expression; limit background to one strong visual metaphor; use thick text stroke and high contrast; avoid tiny text, watermarks, or overcrowded collage; looks like a top-performing Indian documentary YouTube channel thumbnail, not a movie poster.";
+  "Design rules for maximum click-through: keep the layout clean and uncluttered; one dominant text hook only (2-4 words max), highly readable at phone size; subject face fills roughly one-third of the frame with exaggerated but photographic expression; limit background to one strong visual metaphor; use thick text stroke and high contrast; avoid tiny text, watermarks, overcrowded collage, glowing HUD overlays, and plastic over-smoothed surfaces; looks like a top-performing Indian documentary YouTube channel thumbnail shot on location, not a movie poster or game render.";
 
 export const COMPOSITION_HINTS: Record<string, string> = {
-  center: "Center hero composition: subject close and centered, dramatic environment behind.",
-  split: "Split comparison: two or three vertical panels comparing contrasting ideas.",
-  cutout: "Cutout composition: subject on left or right, scene fills the rest of frame.",
-  data: "Data overlay: thin timeline line, node dots, era labels, or plunging graph.",
+  center:
+    "Center hero: subject close and centered, candid low-angle documentary framing, real environment behind with shallow depth of field.",
+  split:
+    "Split comparison: two or three vertical panels comparing contrasting ideas — each panel looks photographed, not symmetrically generated.",
+  cutout:
+    "Cutout composition: subject on left or right like a photo edit, scene fills the rest of frame.",
+  data:
+    "Data overlay: thin timeline line, node dots, era labels, or plunging graph on a real scene — no glowing sci-fi screens.",
 };
 
 export function buildPrompt(

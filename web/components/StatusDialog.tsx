@@ -18,21 +18,24 @@ type Props = {
 };
 
 export function StatusDialog({ open, title, message, progress }: Props) {
+  // Don't mount modal chrome when closed — avoids stuck overlays blocking clicks
+  if (!open) return null;
+
   const showProgress = typeof progress === "number" && progress > 0;
 
   return (
-    <Dialog open={open} onOpenChange={() => {}}>
+    <Dialog open onOpenChange={() => {}}>
       <DialogContent
         showCloseButton={false}
-        className="gap-5 rounded-[16px] border border-[#e8e8e8] bg-white p-6 shadow-[var(--shadow-subtle-3)] sm:max-w-sm pointer-events-auto"
+        className="gap-5 rounded-[16px] border border-[#efefef] bg-white p-6 shadow-[var(--shadow-subtle-3)] sm:max-w-sm pointer-events-auto"
       >
         <DialogHeader className="items-center text-center">
-          <div className="mb-2 flex size-12 items-center justify-center rounded-full bg-[#f5f5f5]">
-            <Loader2 className="size-6 animate-spin text-[#918df6]" />
+          <div className="mb-2 flex size-12 items-center justify-center rounded-full bg-[#f7f7f7]">
+            <Loader2 className="size-6 animate-spin text-[#38296c]" />
           </div>
-          <DialogTitle className="type-subheading text-[#181925]">{title}</DialogTitle>
+          <DialogTitle className="type-subheading text-[#171618]">{title}</DialogTitle>
           {message ? (
-            <DialogDescription className="type-ui font-normal text-[#666666]">
+            <DialogDescription className="type-ui font-normal text-[#727578]">
               {message}
             </DialogDescription>
           ) : null}
@@ -41,7 +44,7 @@ export function StatusDialog({ open, title, message, progress }: Props) {
         {showProgress ? (
           <div className="space-y-2">
             <Progress value={progress} />
-            <p className="text-center type-caption text-[#999999]">{progress}%</p>
+            <p className="text-center type-caption text-[#727578]">{progress}%</p>
           </div>
         ) : null}
       </DialogContent>

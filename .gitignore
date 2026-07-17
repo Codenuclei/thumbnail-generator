@@ -1,12 +1,49 @@
+# Secrets & credentials
 .cohesivity
 .env
-.env.local
-.env*.local
+.env.*
+!.env.example
+!**/.env.example
+web/.env.local
+*.pem
+*.key
+credentials.json
+**/secrets/**
+
+# Local / runtime data
+.data/
+web/.data/
 output/
 __pycache__/
 *.pyc
+*.pyo
+.pytest_cache/
+
+# App build artifacts
 web/node_modules/
 web/.next/
 web/out/
+web/dist/
 *.log
+*.tsbuildinfo
+
+# OS / editor
 .DS_Store
+Thumbs.db
+.cursor/
+.vscode/
+*.swp
+*~
+
+# Office lock / temp
+~$*
+*.tmp
+
+# Local test / deploy artifacts (may contain sensitive responses)
+local-api-out.json
+DEPLOY_URL.txt
+RAILWAY_URL.txt
+
+# Large local data dumps
+*.xlsx
+!docs/**/*.xlsx

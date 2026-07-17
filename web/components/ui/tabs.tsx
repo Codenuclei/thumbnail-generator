@@ -25,9 +25,9 @@ const tabsListVariants = cva(
   {
     variants: {
       variant: {
-        default: "rounded-[9999px] bg-[#f5f5f5] p-1",
+        default: "rounded-[100px] bg-[#f7f7f7] p-1",
         /* Dashboard tab bar — white, underline indicator */
-        line: "gap-0 rounded-none bg-transparent border-b border-[#e8e8e8] p-0",
+        line: "gap-0 rounded-none bg-transparent border-b border-[#efefef] p-0",
       },
     },
     defaultVariants: {
@@ -56,11 +56,11 @@ function TabsTrigger({ className, ...props }: TabsPrimitive.Tab.Props) {
     <TabsPrimitive.Tab
       data-slot="tabs-trigger"
       className={cn(
-        "relative inline-flex h-10 flex-1 items-center justify-center gap-1.5 px-4 text-[14px] font-medium tracking-[-0.32px] whitespace-nowrap text-[#999999] transition-colors outline-none hover:text-[#181925] disabled:pointer-events-none disabled:opacity-50 data-active:text-[#181925]",
-        /* Line variant: lavender underline, no fill change */
-        "group-data-[variant=line]/tabs-list:rounded-none group-data-[variant=line]/tabs-list:bg-transparent after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:bg-[#918df6] after:opacity-0 after:transition-opacity group-data-[variant=line]/tabs-list:data-active:after:opacity-100",
+        "relative inline-flex h-10 flex-1 items-center justify-center gap-1.5 px-4 text-[14px] font-medium tracking-[-0.01em] whitespace-nowrap text-[#727578] transition-colors outline-none hover:text-[#171618] disabled:pointer-events-none disabled:opacity-50 data-active:text-[#171618]",
+        /* Line variant: ink underline */
+        "group-data-[variant=line]/tabs-list:rounded-none group-data-[variant=line]/tabs-list:bg-transparent after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:bg-[#171618] after:opacity-0 after:transition-opacity group-data-[variant=line]/tabs-list:data-active:after:opacity-100",
         /* Pill variant */
-        "group-data-[variant=default]/tabs-list:rounded-[9999px] group-data-[variant=default]/tabs-list:data-active:bg-white group-data-[variant=default]/tabs-list:data-active:shadow-[var(--shadow-subtle-2)]",
+        "group-data-[variant=default]/tabs-list:rounded-[100px] group-data-[variant=default]/tabs-list:data-active:bg-white group-data-[variant=default]/tabs-list:data-active:shadow-[var(--shadow-subtle-2)]",
         className
       )}
       {...props}

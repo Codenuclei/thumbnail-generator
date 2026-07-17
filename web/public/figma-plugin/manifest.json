@@ -1,0 +1,15 @@
+{
+  "name": "Thumbnail Studio Import",
+  "id": "thumbnail-studio-import",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma"],
+  "networkAccess": {
+    "allowedDomains": [
+      "https://storage.cohesivity.ai",
+      "https://cohesivity.ai",
+      "https://fleet-dolphin-gaining.cohesivity.app"
+    ]
+  }
+}

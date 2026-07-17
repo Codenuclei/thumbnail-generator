@@ -1,0 +1,17 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "app/api/generate/route.ts": {
+      "maxDuration": 300,
+      "memory": 3009
+    },
+    "app/api/opening-frames/route.ts": {
+      "maxDuration": 120,
+      "memory": 3009
+    },
+    "app/api/video-intelligence/route.ts": {
+      "maxDuration": 120,
+      "memory": 3009
+    }
+  }
+}

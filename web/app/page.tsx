@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import type { InspirationVideo, ThumbnailFeedback } from "@/lib/inspiration";
 import type { StyleBrief } from "@/lib/style-intelligence";
@@ -11,9 +11,12 @@ import { InspirationGrid } from "@/components/InspirationGrid";
 import { FeedbackDialog, type FeedbackMode } from "@/components/FeedbackDialog";
 import { StatusDialog } from "@/components/StatusDialog";
 import { PalettePicker } from "@/components/PalettePicker";
+import { ColorPicker } from "@/components/ColorPicker";
 import type { EditorAsset } from "@/components/ThumbnailEditor";
 import type { ColorPaletteOption } from "@/lib/palette-types";
 import { applyPaletteToBrief } from "@/lib/palette-types";
+import { DEFAULT_MASTER_PROMPT } from "@/lib/prompt-engine";
+import { COMPOSITION_FACTORS } from "@/lib/composition-factors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -26,7 +29,58 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Search, Sparkles, Loader2, Clapperboard } from "lucide-react";
+import { HistoryMenu } from "@/components/HistoryMenu";
+import { ExportNavMenu } from "@/components/ExportNavMenu";
+import { Search, Sparkles, Loader2, Clapperboard, RefreshCw } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { OpeningFramesPanel, type OpeningFrameClip } from "@/components/OpeningFramesPanel";
+import {
+  extractIntelligenceFramesFromVideoFile,
+  extractOpeningFramesFromVideoFile,
+} from "@/lib/extract-frames-client";
+import {
+  uploadFrameToCohesivityStorage,
+  uploadVideoToCohesivityStorage,
+} from "@/lib/video-storage-client";
+import { FULL_VIDEO_MAX_FRAMES } from "@/lib/video-sample-times";
+import { readJsonResponse } from "@/lib/safe-json";
+import { MediaIntelligencePanel } from "@/components/MediaIntelligencePanel";
+import { ChannelProfilePanel } from "@/components/ChannelProfilePanel";
+import { BrandLanguagePanel } from "@/components/BrandLanguagePanel";
+import { compressDataUrl, compressFile } from "@/lib/image-compress-client";
+import type {
+  MediaImageInput,
+  PersistedMediaPhoto,
+  VideoIntelligenceResult,
+} from "@/lib/video-intelligence-types";
+import { intelligenceForGeneration } from "@/lib/video-intelligence-types";
+import {
+  buildSharePayload,
+  compactVideoIntelligence,
+  decodeShareUrl,
+  deleteHistorySession,
+  encodeShareUrl,
+  listHistory,
+  parseShareTokenFromLocation,
+  saveHistorySession,
+  saveDraft,
+  loadDraft,
+  type StudioSession,
+} from "@/lib/studio-history";
+import { createEmptyDocument } from "@/lib/editor-types";
+import { createEditorHistory, type EditorHistory } from "@/lib/editor-history";
+import {
+  DEFAULT_BRAND_LANGUAGE,
+  loadBrandLanguage,
+  saveBrandLanguage,
+  type BrandLanguage,
+} from "@/lib/brand-language";
+import {
+  loadChannelProfile,
+  saveChannelProfile,
+  type ChannelProfile,
+} from "@/lib/channel-profile";
+import { exportDesignPack, uploadDesignPackToStorage } from "@/lib/design-pack";
 
 type FeedbackMap = Record<string, { rating: "like" | "dislike" | null; comment: string }>;
 
@@ -50,6 +104,9 @@ const IMAGE_SIZES = [
   { value: "2K", label: "2K" },
   { value: "4K", label: "4K Ultra (slow)" },
 ];
+
+/** Fallback slice only if browser decode fails — Vercel body limit. */
+const VIDEO_UPLOAD_SLICE_BYTES = 4 * 1024 * 1024;
 
 export default function Home() {
   const [topic, setTopic] = useState("");
@@ -97,6 +154,885 @@ export default function Home() {
     Record<string, "like" | "dislike" | null>
   >({});
   const [generatedVariants, setGeneratedVariants] = useState<GeneratedVariant[]>([]);
+  const [masterPrompt, setMasterPrompt] = useState(DEFAULT_MASTER_PROMPT);
+  const [useOpeningFrames, setUseOpeningFrames] = useState(false);
+  const [openingFrames, setOpeningFrames] = useState<OpeningFrameClip[]>([]);
+  const [compositionFactors, setCompositionFactors] = useState<string[]>([
+    "rule-of-thirds",
+    "diagonal",
+  ]);
+  const [sessionId, setSessionId] = useState(() => `sess-${Date.now()}`);
+  const [historyList, setHistoryList] = useState<StudioSession[]>([]);
+  const [mediaYoutubeUrl, setMediaYoutubeUrl] = useState("");
+  const [mediaScript, setMediaScript] = useState("");
+  const [mediaPhotos, setMediaPhotos] = useState<PersistedMediaPhoto[]>([]);
+  const [mediaIntelligence, setMediaIntelligence] =
+    useState<VideoIntelligenceResult | null>(null);
+  const [analyzingMedia, setAnalyzingMedia] = useState(false);
+  const [mediaAnalysisProgress, setMediaAnalysisProgress] = useState("");
+  const [brandLanguage, setBrandLanguage] = useState<BrandLanguage>(DEFAULT_BRAND_LANGUAGE);
+  const [channelProfile, setChannelProfile] = useState<ChannelProfile | null>(null);
+  const [channelProfileInput, setChannelProfileInput] = useState("");
+  const [analyzingChannel, setAnalyzingChannel] = useState(false);
+  const [exportingDesignPack, setExportingDesignPack] = useState(false);
+  const [editorHistory, setEditorHistory] = useState<EditorHistory>(() =>
+    createEditorHistory(createEmptyDocument())
+  );
+  const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
+  const videoFilesRef = useRef<Map<string, File>>(new Map());
+
+  const readyOpeningFrames = useMemo(
+    () => openingFrames.filter((f) => f.status === "ready"),
+    [openingFrames]
+  );
+
+  async function streamOpeningFrame(
+    file: File,
+    options?: {
+      storageUrl?: string;
+      storagePath?: string;
+      skipUpload?: boolean;
+      displayName?: string;
+    }
+  ) {
+    if (readyOpeningFrames.length >= 2 || openingFrames.length >= 2) {
+      toast.error("Max 2 source videos");
+      return;
+    }
+
+    const displayName = options?.displayName || file.name;
+    const id = `${Date.now()}-${displayName}`;
+    videoFilesRef.current.set(id, file);
+    setOpeningFrames((prev) => {
+      if (prev.length >= 2) return prev;
+      return [
+        ...prev,
+        {
+          id,
+          name: displayName,
+          status: "uploading",
+          mimeType: "image/jpeg",
+          data: "",
+          label: options?.skipUpload ? "Stored · sampling…" : "",
+          previewUrl: "",
+        },
+      ];
+    });
+
+    try {
+      // 1) Store full video on Cohesivity object storage (chunked — bypasses Vercel body limit).
+      let storageUrl: string | undefined = options?.storageUrl;
+      let storagePath: string | undefined = options?.storagePath;
+
+      // JPEG/PNG mislabeled as video (stale YouTube client, or still upload).
+      const head = new Uint8Array(await file.slice(0, 8).arrayBuffer());
+      const looksJpeg = head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff;
+      const looksPng =
+        head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47;
+      const isStill =
+        file.type.startsWith("image/") || looksJpeg || looksPng;
+
+      if (!options?.skipUpload && !isStill) {
+        try {
+          const stored = await uploadVideoToCohesivityStorage(file, {
+            onProgress: (uploadedBytes, totalBytes) => {
+              const pct = Math.round((uploadedBytes / Math.max(1, totalBytes)) * 100);
+              setOpeningFrames((prev) =>
+                prev.map((clip) =>
+                  clip.id === id
+                    ? { ...clip, label: `Uploading to Cohesivity… ${pct}%` }
+                    : clip
+                )
+              );
+            },
+          });
+          storageUrl = stored.url;
+          storagePath = stored.path;
+        } catch (storageErr) {
+          console.error("Video storage failed (continuing with local sample):", storageErr);
+        }
+      }
+
+      // 2) Sample stills across the FULL runtime in the browser.
+      setOpeningFrames((prev) =>
+        prev.map((clip) => (clip.id === id ? { ...clip, status: "extracting" as const } : clip))
+      );
+
+      let res: Response;
+      let durationSec = 0;
+      let localFrames: Array<{
+        timestampSec: number;
+        mimeType: string;
+        data: string;
+        previewData: string;
+      }> = [];
+
+      if (isStill) {
+        const buf = new Uint8Array(await file.arrayBuffer());
+        let binary = "";
+        const chunk = 0x8000;
+        for (let i = 0; i < buf.length; i += chunk) {
+          binary += String.fromCharCode(...buf.subarray(i, i + chunk));
+        }
+        const b64 = btoa(binary);
+        const mimeType = looksPng || file.type === "image/png" ? "image/png" : "image/jpeg";
+        localFrames = [
+          {
+            timestampSec: 0,
+            mimeType,
+            data: b64,
+            previewData: b64,
+          },
+        ];
+        res = await fetch("/api/opening-frames", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            label: displayName,
+            topic: topic.trim() || undefined,
+            candidates: localFrames.map((f) => ({
+              timestampSec: f.timestampSec,
+              mimeType: f.mimeType,
+              data: f.data,
+            })),
+          }),
+        });
+      } else {
+        try {
+          const extraction = await extractOpeningFramesFromVideoFile(file, {
+            maxFrames: FULL_VIDEO_MAX_FRAMES,
+          });
+          durationSec = extraction.durationSec;
+          localFrames = extraction.frames;
+          // Ranking payload only — no preview blobs (avoids HTML 413 error pages).
+          res = await fetch("/api/opening-frames", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              label: displayName,
+              topic: topic.trim() || undefined,
+              candidates: extraction.frames.map((f) => ({
+                timestampSec: f.timestampSec,
+                mimeType: f.mimeType,
+                data: f.data,
+              })),
+            }),
+          });
+        } catch {
+          // Decode failed — fallback to truncated server ffmpeg path.
+          const uploadBody =
+            file.size > VIDEO_UPLOAD_SLICE_BYTES
+              ? file.slice(0, VIDEO_UPLOAD_SLICE_BYTES)
+              : file;
+          res = await fetch("/api/opening-frames", {
+            method: "POST",
+            headers: {
+              "Content-Type": file.type || "video/mp4",
+              "X-Video-Name": encodeURIComponent(displayName),
+              ...(topic.trim() ? { "X-Video-Topic": encodeURIComponent(topic.trim()) } : {}),
+              "X-Upload-Bytes": String(uploadBody.size),
+              ...(file.size > VIDEO_UPLOAD_SLICE_BYTES
+                ? { "X-Original-Size": String(file.size) }
+                : {}),
+            },
+            body: uploadBody,
+          });
+        }
+      }
+
+      const data = await readJsonResponse<{
+        error?: string;
+        mimeType?: string;
+        data?: string;
+        label?: string;
+        timestampSec?: number;
+        candidates?: Array<{
+          timestampSec: number;
+          mimeType: string;
+          data?: string;
+          previewData?: string;
+        }>;
+        geminiPickIndex?: number;
+        geminiReason?: string;
+        pickSource?: "gemini" | "heuristic";
+      }>(res);
+      if (!res.ok) throw new Error(data.error || "Frame extract failed");
+
+      const pickIdx =
+        typeof data.geminiPickIndex === "number" ? data.geminiPickIndex : 0;
+
+      const candidates =
+        localFrames.length > 0
+          ? localFrames.map((c) => ({
+              timestampSec: c.timestampSec,
+              mimeType: c.mimeType,
+              data: c.data,
+              previewUrl: `data:${c.mimeType};base64,${c.previewData || c.data}`,
+            }))
+          : Array.isArray(data.candidates)
+            ? data.candidates
+                .filter((c) => c.data)
+                .map((c) => ({
+                  timestampSec: c.timestampSec,
+                  mimeType: c.mimeType,
+                  data: c.data as string,
+                  previewUrl: `data:${c.mimeType};base64,${c.previewData || c.data}`,
+                }))
+            : [];
+
+      const pickedCandidate =
+        candidates[pickIdx] ??
+        candidates.find((c) => c.timestampSec === data.timestampSec) ??
+        candidates[0] ??
+        null;
+
+      // 3) Also store the winning still for durable reference.
+      let frameStorageUrl: string | undefined;
+      if (pickedCandidate?.data) {
+        const frameStored = await uploadFrameToCohesivityStorage(
+          pickedCandidate.data,
+          pickedCandidate.mimeType || "image/jpeg",
+          `${file.name}-best`
+        );
+        frameStorageUrl = frameStored?.url;
+      }
+
+      if (!durationSec && typeof data.timestampSec === "number") {
+        durationSec = Math.max(
+          data.timestampSec,
+          ...(candidates.map((c) => c.timestampSec) || [0])
+        );
+      }
+
+      const mimeType = data.mimeType || pickedCandidate?.mimeType || "image/jpeg";
+      const frameData = data.data || pickedCandidate?.data || "";
+      if (!frameData) throw new Error("No frame selected from video");
+
+      setOpeningFrames((prev) =>
+        prev.map((clip) =>
+          clip.id === id
+            ? {
+                ...clip,
+                status: "ready" as const,
+                mimeType,
+                data: frameData,
+                label: data.label || `Frame @${data.timestampSec}s: ${displayName.slice(0, 40)}`,
+                previewUrl: pickedCandidate?.previewUrl
+                  ? pickedCandidate.previewUrl
+                  : `data:${mimeType};base64,${frameData}`,
+                timestampSec: pickedCandidate?.timestampSec ?? data.timestampSec,
+                bytesRead: file.size,
+                durationSec,
+                frameCount: candidates.length,
+                storageUrl,
+                storagePath,
+                frameStorageUrl,
+                candidates,
+                geminiPickIndex: data.geminiPickIndex,
+                geminiReason: data.geminiReason,
+                pickSource: data.pickSource,
+              }
+            : clip
+        )
+      );
+
+      const mb = (file.size / (1024 * 1024)).toFixed(1);
+      const pickLabel =
+        data.pickSource === "gemini"
+          ? `Gemini picked @${pickedCandidate?.timestampSec ?? data.timestampSec}s`
+          : `@${pickedCandidate?.timestampSec ?? data.timestampSec}s`;
+      toast.success(
+        `${pickLabel} from full video · ${candidates.length || "?"} samples · ${mb}MB${
+          storageUrl ? " · stored" : ""
+        }`
+      );
+    } catch (err) {
+      videoFilesRef.current.delete(id);
+      setOpeningFrames((prev) => prev.filter((clip) => clip.id !== id));
+      toast.error(err instanceof Error ? err.message : "Full-video ingest failed");
+    }
+  }
+
+  async function ingestYoutubeUrl(url: string) {
+    if (readyOpeningFrames.length >= 2 || openingFrames.length >= 2) {
+      toast.error("Max 2 source videos");
+      return;
+    }
+
+    const placeholderId = `yt-${Date.now()}`;
+    // Wire the same URL into Media Intelligence (captions / metadata analysis).
+    setMediaYoutubeUrl(url.trim());
+    setUseOpeningFrames(true);
+    setOpeningFrames((prev) => {
+      if (prev.length >= 2) return prev;
+      return [
+        ...prev,
+        {
+          id: placeholderId,
+          name: url,
+          status: "uploading",
+          mimeType: "image/jpeg",
+          data: "",
+          label: "Fetching YouTube stills…",
+          previewUrl: "",
+        },
+      ];
+    });
+
+    try {
+      const res = await fetch("/api/youtube/download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const data = await readJsonResponse<{
+        error?: string;
+        path?: string;
+        url?: string;
+        title?: string;
+        contentType?: string;
+        bytes?: number;
+        qualityLabel?: string;
+        filename?: string;
+        frames?: Array<{
+          key: string;
+          url: string;
+          mimeType: string;
+          data: string;
+          label: string;
+          timestampSec: number;
+        }>;
+      }>(res);
+      if (!res.ok) throw new Error(data.error || "YouTube fetch failed");
+      if (!data.frames?.length || !data.frames[0]?.data) {
+        throw new Error("No YouTube thumbnails returned");
+      }
+
+      const displayName = data.title || data.filename || "YouTube video";
+      setOpeningFrames((prev) =>
+        prev.map((clip) =>
+          clip.id === placeholderId
+            ? {
+                ...clip,
+                name: displayName,
+                status: "extracting",
+                label: `Gemini picking best of ${data.frames!.length} stills…`,
+                storageUrl: data.url,
+                storagePath: data.path,
+              }
+            : clip
+        )
+      );
+
+      // Rank every distinct CDN / timeline still (same path as uploaded video samples).
+      const pickRes = await fetch("/api/opening-frames", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: displayName,
+          topic: topic.trim() || undefined,
+          candidates: data.frames.map((f) => ({
+            timestampSec: f.timestampSec,
+            mimeType: f.mimeType || "image/jpeg",
+            data: f.data,
+          })),
+        }),
+      });
+      const pick = await readJsonResponse<{
+        error?: string;
+        mimeType?: string;
+        data?: string;
+        label?: string;
+        timestampSec?: number;
+        geminiPickIndex?: number;
+        geminiReason?: string;
+        pickSource?: "gemini" | "heuristic";
+      }>(pickRes);
+      if (!pickRes.ok) throw new Error(pick.error || "Frame pick failed");
+
+      const pickIdx =
+        typeof pick.geminiPickIndex === "number" ? pick.geminiPickIndex : 0;
+      const candidates = data.frames
+        .filter((f) => f.data)
+        .map((f) => ({
+          timestampSec: f.timestampSec,
+          mimeType: f.mimeType || "image/jpeg",
+          data: f.data,
+          previewUrl: `data:${f.mimeType || "image/jpeg"};base64,${f.data}`,
+        }));
+      const picked = candidates[pickIdx] ?? candidates[0];
+      const mimeType = pick.mimeType || picked.mimeType;
+      const frameData = pick.data || picked.data;
+
+      let frameStorageUrl = data.frames[pickIdx]?.url || data.url;
+      const frameStored = await uploadFrameToCohesivityStorage(
+        frameData,
+        mimeType,
+        `${displayName}-best`
+      );
+      if (frameStored?.url) frameStorageUrl = frameStored.url;
+
+      const readyClip: OpeningFrameClip = {
+        id: placeholderId,
+        name: displayName,
+        status: "ready",
+        mimeType,
+        data: frameData,
+        label:
+          pick.label ||
+          `YouTube still · Gemini @${picked.timestampSec}s · ${candidates.length} candidates`,
+        previewUrl: picked.previewUrl,
+        timestampSec: picked.timestampSec,
+        bytesRead: data.bytes,
+        frameCount: candidates.length,
+        storageUrl: data.url,
+        storagePath: data.path || data.frames[0]?.key,
+        frameStorageUrl,
+        candidates,
+        geminiPickIndex: pick.geminiPickIndex,
+        geminiReason: pick.geminiReason,
+        pickSource: pick.pickSource,
+      };
+
+      setOpeningFrames((prev) =>
+        prev.map((clip) => (clip.id === placeholderId ? readyClip : clip))
+      );
+
+      const pickLabel =
+        pick.pickSource === "gemini"
+          ? `Gemini picked best of ${candidates.length}`
+          : `Best of ${candidates.length} stills`;
+      toast.success(`${pickLabel} · stored`);
+
+      // Full media intelligence: captions + metadata + ranked stills.
+      try {
+        await handleAnalyzeMedia({
+          youtubeUrl: url.trim(),
+          openingFramesOverride: [readyClip],
+        });
+      } catch (analyzeErr) {
+        toast.error(
+          analyzeErr instanceof Error
+            ? `Stills ready, analysis failed: ${analyzeErr.message}`
+            : "Stills ready, but media analysis failed"
+        );
+      }
+    } catch (err) {
+      setOpeningFrames((prev) => prev.filter((clip) => clip.id !== placeholderId));
+      toast.error(err instanceof Error ? err.message : "YouTube ingest failed");
+    }
+  }
+
+  function selectOpeningFrame(clipId: string, timestampSec: number) {
+    setOpeningFrames((prev) =>
+      prev.map((clip) => {
+        if (clip.id !== clipId || !clip.candidates?.length) return clip;
+        const chosen = clip.candidates.find((c) => c.timestampSec === timestampSec);
+        if (!chosen) return clip;
+        return {
+          ...clip,
+          timestampSec: chosen.timestampSec,
+          mimeType: chosen.mimeType,
+          data: chosen.data,
+          previewUrl: chosen.previewUrl,
+          label: `Frame @${chosen.timestampSec}s (manual): ${clip.name.slice(0, 40)}`,
+        };
+      })
+    );
+  }
+
+  async function handleUploadMediaPhotos(files: File[]) {
+    const slots = Math.max(0, 4 - mediaPhotos.length);
+    if (!slots) {
+      toast.error("Max 4 media photos");
+      return;
+    }
+    try {
+      const compressed = await Promise.all(
+        files.slice(0, slots).map(async (file, index) => {
+          const image = await compressFile(file, { maxWidth: 640, quality: 0.72 });
+          return {
+            id: `photo-${Date.now()}-${index}`,
+            name: file.name,
+            mimeType: image.mimeType,
+            data: image.data,
+            previewUrl: image.previewUrl,
+          } satisfies PersistedMediaPhoto;
+        })
+      );
+      setMediaPhotos((previous) => [...previous, ...compressed].slice(0, 4));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not read photo");
+    }
+  }
+
+  async function handleAnalyzeMedia(options?: {
+    youtubeUrl?: string;
+    openingFramesOverride?: OpeningFrameClip[];
+  }) {
+    if (analyzingMedia) return;
+    setAnalyzingMedia(true);
+    setMediaAnalysisProgress("Preparing sources…");
+    const ytForAnalysis = (options?.youtubeUrl || mediaYoutubeUrl).trim();
+    const clipsForAnalysis =
+      options?.openingFramesOverride ||
+      openingFrames.filter((f) => f.status === "ready");
+    try {
+      const images: MediaImageInput[] = mediaPhotos.map((photo) => ({
+        id: photo.id,
+        name: photo.name,
+        kind: "photo",
+        mimeType: photo.mimeType,
+        data: photo.data,
+      }));
+
+      for (let clipIndex = 0; clipIndex < clipsForAnalysis.length; clipIndex++) {
+        const clip = clipsForAnalysis[clipIndex];
+        const remaining = 8 - images.length;
+        if (remaining <= 0) break;
+        const file = videoFilesRef.current.get(clip.id);
+        if (file) {
+          setMediaAnalysisProgress(`Sampling ${clip.name}…`);
+          try {
+            const extraction = await extractIntelligenceFramesFromVideoFile(file, {
+              maxFrames: Math.min(
+                16,
+                Math.max(
+                  6,
+                  Math.floor(remaining / Math.max(1, clipsForAnalysis.length - clipIndex)) * 2
+                )
+              ),
+              onProgress: (completed, total) =>
+                setMediaAnalysisProgress(
+                  `Sampling ${clip.name} · ${completed}/${total} frames`
+                ),
+            });
+            for (const frame of extraction.frames) {
+              if (images.length >= 8) break;
+              images.push({
+                id: `${clip.id}-${frame.timestampSec}`,
+                name: `${clip.name} @${frame.timestampSec}s`,
+                kind: "video-frame",
+                mimeType: frame.mimeType,
+                data: frame.data,
+                timestampSec: frame.timestampSec,
+              });
+            }
+            continue;
+          } catch {
+            // Fall through to the already extracted opening candidates.
+          }
+        }
+
+        for (const frame of clip.candidates || []) {
+          if (images.length >= 8) break;
+          if (!frame.data) continue;
+          images.push({
+            id: `${clip.id}-${frame.timestampSec}`,
+            name: `${clip.name} @${frame.timestampSec}s`,
+            kind: "video-frame",
+            mimeType: frame.mimeType,
+            data: frame.data,
+            timestampSec: frame.timestampSec,
+          });
+        }
+      }
+
+      setMediaAnalysisProgress("Understanding context, depth, colors, and hooks…");
+      const response = await fetch("/api/video-intelligence", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topic: topic.trim() || undefined,
+          youtubeUrl: ytForAnalysis || undefined,
+          script: mediaScript.trim() || undefined,
+          images,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Media analysis failed");
+      const result = data.result as VideoIntelligenceResult;
+      setMediaIntelligence(result);
+      setStyleBrief(result.styleBrief);
+      if (!topic.trim() && result.recommendedTopic) setTopic(result.recommendedTopic);
+      if (!hook.trim() && result.hooks[0]?.text) setHook(result.hooks[0].text);
+      if (result.palettes.length) {
+        setPalettes(result.palettes);
+        setSelectedPaletteId(result.palettes[0].id);
+      }
+      if (clipsForAnalysis.length) setUseOpeningFrames(true);
+      toast.success(
+        `Media understood · ${result.confidence.level} confidence · ${result.hooks.length} hooks`
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Media analysis failed");
+    } finally {
+      setAnalyzingMedia(false);
+      setMediaAnalysisProgress("");
+    }
+  }
+
+  useEffect(() => {
+    setHistoryList(listHistory());
+    setBrandLanguage(loadBrandLanguage());
+    const savedProfile = loadChannelProfile();
+    if (savedProfile) {
+      setChannelProfile(savedProfile);
+      setChannelProfileInput(savedProfile.channelInput);
+    }
+    const draft = loadDraft();
+    if (draft && !parseShareTokenFromLocation()) {
+      setTopic(draft.topic);
+      setChannels(draft.channels);
+      setHook(draft.hook);
+      setComposition(draft.composition);
+      setModel(draft.model);
+      setImageSize(draft.imageSize);
+      setMasterPrompt(draft.masterPrompt);
+      setCompositionFactors(draft.compositionFactors);
+      setUseOpeningFrames(draft.useOpeningFrames);
+      setMediaYoutubeUrl(draft.mediaYoutubeUrl || "");
+      setMediaScript(draft.mediaScript || "");
+      setMediaPhotos(draft.mediaPhotos || []);
+      setMediaIntelligence(draft.mediaIntelligence || null);
+      if (draft.editorDocument) {
+        setEditorHistory(createEditorHistory(draft.editorDocument));
+      }
+      if (draft.brandLanguage) setBrandLanguage(draft.brandLanguage);
+      if (draft.channelProfile) {
+        setChannelProfile(draft.channelProfile);
+        setChannelProfileInput(draft.channelProfile.channelInput);
+      }
+    }
+    const token = parseShareTokenFromLocation();
+    if (!token) return;
+    void decodeShareUrl(token).then((payload) => {
+      if (!payload) return;
+      setTopic(payload.topic);
+      setChannels(payload.channels);
+      setHook(payload.hook);
+      setComposition(payload.composition);
+      setModel(payload.model);
+      setImageSize(payload.imageSize);
+      setMasterPrompt(payload.masterPrompt);
+      setCompositionFactors(payload.compositionFactors);
+      setUseOpeningFrames(payload.useOpeningFrames);
+      setImage(payload.image);
+      setBackend(payload.backend);
+      setIterations(payload.iterations);
+      setGeneratedVariants(payload.generatedVariants);
+      setTitleSuggestions(payload.titleSuggestions);
+      setMediaYoutubeUrl(payload.mediaYoutubeUrl || "");
+      setMediaScript(payload.mediaScript || "");
+      setMediaPhotos(payload.mediaPhotos || []);
+      setMediaIntelligence(payload.mediaIntelligence || null);
+      if (payload.editorDocument) {
+        setEditorHistory(createEditorHistory(payload.editorDocument));
+      }
+      if (payload.brandLanguage) setBrandLanguage(payload.brandLanguage);
+      if (payload.channelProfile) {
+        setChannelProfile(payload.channelProfile);
+        setChannelProfileInput(payload.channelProfile.channelInput);
+      }
+      if (payload.image) setCanvasTab("preview");
+      toast.success("Shared session loaded");
+      window.history.replaceState({}, "", window.location.pathname);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const exportProvider = params.get("export");
+    const status = params.get("status");
+    const message = params.get("message");
+    if (!exportProvider || !status) return;
+    if (status === "connected") {
+      toast.success(`${exportProvider === "canva" ? "Canva" : "Figma"} connected`);
+    } else if (status === "error") {
+      toast.error(message || `${exportProvider} connection failed`);
+    }
+    params.delete("export");
+    params.delete("status");
+    params.delete("message");
+    const next = params.toString();
+    window.history.replaceState({}, "", next ? `?${next}` : window.location.pathname);
+  }, []);
+
+  useEffect(() => {
+    saveDraft({
+      topic,
+      channels,
+      hook,
+      composition,
+      model,
+      imageSize,
+      masterPrompt,
+      compositionFactors,
+      useOpeningFrames,
+      mediaYoutubeUrl,
+      mediaScript,
+      mediaPhotos,
+      mediaIntelligence: compactVideoIntelligence(mediaIntelligence),
+      editorDocument: editorHistory.present,
+      brandLanguage,
+      channelProfile,
+    });
+  }, [
+    topic,
+    channels,
+    hook,
+    composition,
+    model,
+    imageSize,
+    masterPrompt,
+    compositionFactors,
+    useOpeningFrames,
+    mediaYoutubeUrl,
+    mediaScript,
+    mediaPhotos,
+    mediaIntelligence,
+    editorHistory.present,
+    brandLanguage,
+    channelProfile,
+  ]);
+
+  useEffect(() => {
+    saveBrandLanguage(brandLanguage);
+  }, [brandLanguage]);
+
+  useEffect(() => {
+    if (channelProfile) saveChannelProfile(channelProfile);
+  }, [channelProfile]);
+
+  useEffect(() => {
+    if (!image) return;
+    setEditorHistory((prev) => ({
+      ...prev,
+      present: {
+        ...prev.present,
+        backgroundImage: image,
+      },
+    }));
+  }, [image]);
+
+  async function shrinkForStorage(dataUrl: string | null): Promise<string | null> {
+    if (!dataUrl) return null;
+    try {
+      const c = await compressDataUrl(dataUrl, { maxWidth: 640, quality: 0.72 });
+      return c.previewUrl;
+    } catch {
+      return dataUrl;
+    }
+  }
+
+  async function buildCurrentSession(): Promise<StudioSession> {
+    const imageSmall = await shrinkForStorage(image);
+    const iterationsSmall = await Promise.all(
+      iterations.map(async (it) => ({
+        ...it,
+        image: (await shrinkForStorage(it.image)) || it.image,
+      }))
+    );
+    const variantsSmall = await Promise.all(
+      generatedVariants.map(async (v) => ({
+        ...v,
+        image: (await shrinkForStorage(v.image)) || v.image,
+      }))
+    );
+    return {
+      id: sessionId,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      topic,
+      channels,
+      hook,
+      composition,
+      model,
+      imageSize,
+      masterPrompt,
+      compositionFactors,
+      useOpeningFrames,
+      image: imageSmall,
+      backend,
+      iterations: iterationsSmall,
+      generatedVariants: variantsSmall,
+      titleSuggestions,
+      mediaYoutubeUrl,
+      mediaScript,
+      mediaPhotos,
+      mediaIntelligence: compactVideoIntelligence(mediaIntelligence),
+      editorDocument: editorHistory.present,
+      brandLanguage,
+      channelProfile,
+    };
+  }
+
+  async function persistSession() {
+    const session = await buildCurrentSession();
+    saveHistorySession(session);
+    setHistoryList(listHistory());
+  }
+
+  function loadFromSession(session: StudioSession) {
+    setSessionId(session.id);
+    setTopic(session.topic);
+    setChannels(session.channels);
+    setHook(session.hook);
+    setComposition(session.composition);
+    setModel(session.model);
+    setImageSize(session.imageSize);
+    setMasterPrompt(session.masterPrompt);
+    setCompositionFactors(session.compositionFactors);
+    setUseOpeningFrames(session.useOpeningFrames);
+    setImage(session.image);
+    setBackend(session.backend);
+    setIterations(session.iterations);
+    setGeneratedVariants(session.generatedVariants);
+    setTitleSuggestions(session.titleSuggestions);
+    setMediaYoutubeUrl(session.mediaYoutubeUrl || "");
+    setMediaScript(session.mediaScript || "");
+    setMediaPhotos(session.mediaPhotos || []);
+    setMediaIntelligence(session.mediaIntelligence || null);
+    if (session.editorDocument) {
+      setEditorHistory(createEditorHistory(session.editorDocument));
+    } else {
+      setEditorHistory(createEditorHistory(createEmptyDocument(session.image)));
+    }
+    if (session.brandLanguage) setBrandLanguage(session.brandLanguage);
+    if (session.channelProfile) {
+      setChannelProfile(session.channelProfile);
+      setChannelProfileInput(session.channelProfile.channelInput);
+    }
+    if (session.image) setCanvasTab("preview");
+  }
+
+  async function handleShareLink() {
+    try {
+      const payload = buildSharePayload(await buildCurrentSession());
+      if (payload.image) {
+        const c = await compressDataUrl(payload.image, { maxWidth: 960, quality: 0.75 });
+        payload.image = c.previewUrl;
+      }
+      payload.iterations = await Promise.all(
+        payload.iterations.map(async (it) => {
+          const c = await compressDataUrl(it.image, { maxWidth: 640, quality: 0.72 });
+          return { ...it, image: c.previewUrl };
+        })
+      );
+      payload.generatedVariants = await Promise.all(
+        payload.generatedVariants.map(async (v) => {
+          const c = await compressDataUrl(v.image, { maxWidth: 640, quality: 0.72 });
+          return { ...v, image: c.previewUrl };
+        })
+      );
+      const url = await encodeShareUrl(payload);
+      await navigator.clipboard.writeText(url);
+      toast.success("Share link copied — paste to restore this session");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Share failed");
+    }
+  }
 
   useEffect(() => {
     fetch("/api/health")
@@ -351,7 +1287,10 @@ export default function Home() {
       if (data.styleBrief?.suggestedHook && !hook) {
         setHook(data.styleBrief.suggestedHook);
       }
-      toast.success(`${next.length} color directions from liked thumbs`);
+      const src = data.source === "pixels" || data.source === "pixels+gemini"
+        ? "sampled from liked thumbs"
+        : "fallback";
+      toast.success(`${next.length} palettes ${src}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Palette suggestion failed");
     } finally {
@@ -359,13 +1298,42 @@ export default function Home() {
     }
   }
 
+  function triggerPaletteSuggest(
+    videoId: string,
+    comment: string,
+    baseFeedback: FeedbackMap = feedback
+  ) {
+    if (palettes.length > 0) return;
+    const nextFeedback: FeedbackMap = {
+      ...baseFeedback,
+      [videoId]: { rating: "like", comment },
+    };
+    const liked = inspirations.filter((v) => nextFeedback[v.videoId]?.rating === "like");
+    const payload: ThumbnailFeedback[] = liked.map((v) => ({
+      videoId: v.videoId,
+      title: v.title,
+      channel: v.channel,
+      rating: "like",
+      comment: nextFeedback[v.videoId]?.comment || "",
+    }));
+    void suggestPalettes(undefined, liked, payload);
+  }
+
   function openFeedback(item: InspirationVideo, mode: FeedbackMode) {
     const current = feedback[item.videoId]?.rating;
+    const existingComment = feedback[item.videoId]?.comment || "";
+
+    // Toggle off if clicking the same rating again
     if (mode === "like" && current === "like") {
       setFeedback((prev) => ({
         ...prev,
         [item.videoId]: { rating: null, comment: prev[item.videoId]?.comment || "" },
       }));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(item.videoId);
+        return next;
+      });
       return;
     }
     if (mode === "dislike" && current === "dislike") {
@@ -375,9 +1343,25 @@ export default function Home() {
       }));
       return;
     }
-    if (mode === "explore" && current !== "like") {
-      toast.info("Like a reference first, then explore similar");
+
+    if (mode === "explore") {
+      if (current !== "like") {
+        // Auto-like so Explore isn't dead, then open notes
+        applyRating(item.videoId, "like", existingComment);
+        triggerPaletteSuggest(item.videoId, existingComment);
+        toast.success("Liked — add a note or find similar");
+      }
+      setFeedbackDialog({ open: true, mode: "explore", item });
       return;
+    }
+
+    // Like / dislike apply immediately so button state updates right away
+    applyRating(item.videoId, mode, existingComment);
+    if (mode === "like") {
+      toast.success("Liked");
+      triggerPaletteSuggest(item.videoId, existingComment);
+    } else {
+      toast.success("Disliked");
     }
     setFeedbackDialog({ open: true, mode, item });
   }
@@ -387,32 +1371,16 @@ export default function Home() {
     if (!mode || !item || mode === "explore") return;
     applyRating(item.videoId, mode, comment);
     setFeedbackDialog({ open: false, mode: null, item: null });
-    toast.success(mode === "like" ? "Liked — feedback saved" : "Disliked — feedback saved");
+    toast.success(mode === "like" ? "Note saved on like" : "Note saved on dislike");
 
-    // Colors only after likes on Gemini-qualified thumbs
-    if (mode === "like" && palettes.length === 0) {
-      const nextFeedback: FeedbackMap = {
-        ...feedback,
-        [item.videoId]: { rating: "like", comment },
-      };
-      const liked = inspirations.filter((v) => nextFeedback[v.videoId]?.rating === "like");
-      const payload: ThumbnailFeedback[] = liked.map((v) => ({
-        videoId: v.videoId,
-        title: v.title,
-        channel: v.channel,
-        rating: "like",
-        comment: nextFeedback[v.videoId]?.comment || "",
-      }));
-      void suggestPalettes(undefined, liked, payload);
+    if (mode === "like") {
+      triggerPaletteSuggest(item.videoId, comment);
     }
   }
 
   async function exploreSimilar(item: InspirationVideo, comment?: string) {
-    if (feedback[item.videoId]?.rating !== "like" && !comment) return;
-
-    if (comment !== undefined) {
-      applyRating(item.videoId, "like", comment);
-    }
+    const note = comment ?? feedback[item.videoId]?.comment ?? "";
+    applyRating(item.videoId, "like", note);
 
     setFeedbackDialog({ open: false, mode: null, item: null });
     setExploring(true);
@@ -435,7 +1403,7 @@ export default function Home() {
               title: item.title,
               channel: item.channel,
               rating: "like" as const,
-              comment: comment ?? feedback[item.videoId]?.comment ?? "",
+              comment: note,
             },
           ],
         }),
@@ -513,15 +1481,25 @@ export default function Home() {
     const selected = inspirations.filter((item) => selectedIds.has(item.videoId));
     const isIteration = Boolean(opts?.iterationNote?.trim());
 
-    if (!isIteration && !selected.length) {
-      throw new Error("Select at least one reference thumbnail");
-    }
-
-    if (!isIteration && likedVideos.length === 0) {
-      throw new Error("Like at least one qualified thumbnail so we can pick colors from it");
-    }
+    // Scratch mode: topic (+ optional hook) is enough. Refs / media / likes are optional.
 
     const brief = applyPaletteToBrief(styleBrief, selectedPalette) || styleBrief;
+
+    let compressedBase: string | undefined;
+    let compressedAssets = opts?.editAssets || [];
+    if (isIteration && opts?.baseImage) {
+      const c = await compressDataUrl(opts.baseImage, { maxWidth: 1280, quality: 0.82 });
+      compressedBase = c.data;
+      compressedAssets = await Promise.all(
+        (opts.editAssets || []).map(async (a) => {
+          const ac = await compressDataUrl(`data:${a.mimeType};base64,${a.data}`, {
+            maxWidth: 1024,
+            quality: 0.8,
+          });
+          return { ...a, mimeType: ac.mimeType, data: ac.data, previewUrl: ac.previewUrl };
+        })
+      );
+    }
 
     const res = await fetch("/api/generate", {
       method: "POST",
@@ -533,24 +1511,74 @@ export default function Home() {
         model: model === "default" ? "" : model,
         imageSize,
         styleBrief: brief,
+        masterPrompt,
+        useOpeningFrames,
+        openingFrames:
+          useOpeningFrames && !isIteration
+            ? readyOpeningFrames.map((f) => ({
+                mimeType: f.mimeType,
+                data: f.data,
+                label: f.label,
+              }))
+            : [],
+        compositionFactors,
         selectedPalette,
         paletteOptions: palettes,
-        variantCount: isIteration ? 1 : 4,
+        variantCount: isIteration ? 1 : 2,
         inspirations: selected,
         feedback: buildFeedbackPayload(),
         titleSuggestions,
+        mediaIntelligence: intelligenceForGeneration(mediaIntelligence),
+        brandLanguage,
+        channelProfile: channelProfile || undefined,
         iterationNote: opts?.iterationNote,
         iterationIndex: opts?.iterationIndex,
-        baseImage: opts?.baseImage,
-        assets: (opts?.editAssets || []).map((a) => ({
-          mimeType: a.mimeType,
-          data: a.data,
-          label: a.name,
-        })),
+        baseImage: compressedBase ?? opts?.baseImage?.replace(/^data:[^;]+;base64,/, ""),
+        assets: isIteration
+          ? compressedAssets.map((a) => ({
+              mimeType: a.mimeType,
+              data: a.data,
+              label: a.name,
+            }))
+          : mediaPhotos.map((photo) => ({
+              mimeType: photo.mimeType,
+              data: photo.data,
+              label: `Media photo: ${photo.name}`,
+            })),
       }),
+      signal: AbortSignal.timeout(150_000),
     });
 
-    const data = await res.json();
+    let data: {
+      error?: string;
+      images?: Array<{
+        id: string;
+        image: string;
+        label: string;
+        suggestedTitle?: string;
+        paletteId?: string;
+        paletteName?: string;
+        composition?: string;
+        compositionLabel?: string;
+        cameraFilter?: string;
+        cameraFilterLabel?: string;
+        compositionFactor?: string;
+        compositionFactorLabel?: string;
+      }>;
+      image?: string;
+      backend?: string;
+      pipeline?: PipelineOverview;
+      variantStats?: { requested?: number; succeeded?: number };
+    };
+    try {
+      data = await res.json();
+    } catch {
+      throw new Error(
+        res.status === 504 || res.status === 502
+          ? "Generation timed out on the server — try 1K with 1–2 references."
+          : `Generation failed (${res.status})`
+      );
+    }
     if (!res.ok) throw new Error(data.error || "Generation failed");
     return data;
   }
@@ -558,6 +1586,11 @@ export default function Home() {
   async function handleGenerate(e: React.FormEvent) {
     e.preventDefault();
     if (!topic.trim()) return;
+
+    if (useOpeningFrames && readyOpeningFrames.length === 0) {
+      toast.error("Upload a video — we'll sample the full runtime for the best thumbnail still");
+      return;
+    }
 
     if (likedVideos.length && !palettes.length) {
       await suggestPalettes();
@@ -571,19 +1604,19 @@ export default function Home() {
     try {
       const data = await runGeneration();
       const variants: GeneratedVariant[] = Array.isArray(data.images)
-        ? data.images.map(
-            (v: {
-              id: string;
-              image: string;
-              label: string;
-              paletteId?: string;
-              composition?: string;
-            }) => ({
+        ? data.images.map((v) => ({
               id: v.id,
               image: `data:image/png;base64,${v.image}`,
               label: v.label,
+              suggestedTitle: v.suggestedTitle || v.label,
               paletteId: v.paletteId,
+              paletteName: v.paletteName,
               composition: v.composition,
+              compositionLabel: v.compositionLabel,
+              cameraFilter: v.cameraFilter,
+              cameraFilterLabel: v.cameraFilterLabel,
+              compositionFactor: v.compositionFactor,
+              compositionFactorLabel: v.compositionFactorLabel,
             })
           )
         : data.image
@@ -607,11 +1640,17 @@ export default function Home() {
       setIterationIndex(1);
       setIterationNote("");
       setAssets([]);
+      const stats = data.variantStats as { requested?: number; succeeded?: number } | undefined;
       toast.success(
-        variants.length > 1
-          ? `${variants.length} thumbnail combinations ready`
-          : "Thumbnail generated"
+        variants.length >= 4
+          ? `4 thumbnail combinations ready`
+          : variants.length > 1
+            ? `${variants.length} of ${stats?.requested || 4} combinations ready`
+            : variants.length === 1
+              ? "Only 1 variant succeeded — try again with 1K"
+              : "Thumbnail generated"
       );
+      void persistSession();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Generation failed";
       setError(msg);
@@ -644,6 +1683,7 @@ export default function Home() {
       ]);
       setIterationNote("");
       toast.success(`Applied iteration v${nextIndex}`);
+      void persistSession();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Iteration failed");
     } finally {
@@ -671,95 +1711,171 @@ export default function Home() {
     a.click();
   }
 
+  async function handleAnalyzeChannelProfile() {
+    const input = channelProfileInput.trim() || channels.trim().split("\n")[0]?.trim();
+    if (!input) {
+      toast.error("Enter a channel URL or handle");
+      return;
+    }
+    setAnalyzingChannel(true);
+    try {
+      const res = await fetch("/api/channel-profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel: input, topic: topic.trim() || "channel" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Channel analysis failed");
+      setChannelProfile(data.profile as ChannelProfile);
+      setChannelProfileInput(input);
+      toast.success(`Channel profile ready · ${data.profile.evidence?.length || 0} evidence thumbnails`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Channel analysis failed");
+    } finally {
+      setAnalyzingChannel(false);
+    }
+  }
+
+  async function handleExportDesignPack() {
+    if (!image && generatedVariants.length === 0) {
+      toast.error("Generate a thumbnail before exporting a design pack");
+      return;
+    }
+    setExportingDesignPack(true);
+    try {
+      const selectedPalette = palettes.find((p) => p.id === selectedPaletteId) || null;
+      const { metadata, flattenedImage } = await exportDesignPack({
+        topic,
+        hook,
+        activeImage: image,
+        paletteColors: selectedPalette?.colors || styleBrief?.colorPalette || [],
+        paletteId: selectedPalette?.id,
+        paletteName: selectedPalette?.name,
+        editorDoc: editorHistory.present,
+        mediaIntelligence,
+        channelProfile,
+        brandLanguage,
+        variants: generatedVariants,
+      });
+      const uploaded = await uploadDesignPackToStorage(metadata, flattenedImage || image || undefined);
+      if (uploaded.metadataUrl) {
+        toast.success("Design pack exported and metadata uploaded to Cohesivity storage");
+      } else {
+        toast.success("Design pack downloaded (PNG variants + metadata.json)");
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Design pack export failed");
+    } finally {
+      setExportingDesignPack(false);
+    }
+  }
+
   return (
-    <div className="h-dvh overflow-hidden flex flex-col bg-white">
-      {/* Top bar — centered pill nav feel */}
-      <header className="shrink-0 bg-white">
+    <div className="h-dvh overflow-hidden flex flex-col bg-[#f7f7f7]">
+      {/* Top bar */}
+      <header className="shrink-0 bg-[#f7f7f7]">
         <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-4 px-6 py-4">
           <div className="flex min-w-0 items-center gap-3">
-            <Clapperboard className="size-5 shrink-0 text-[#181925]" strokeWidth={1.75} />
-            <h1 className="type-subheading text-[#181925]">Thumbnail Studio</h1>
+            <Clapperboard className="size-5 shrink-0 text-[#171618]" strokeWidth={1.75} />
+            <h1 className="type-heading-sm text-[#171618]">Thumbnail Studio</h1>
           </div>
 
-          <nav className="hidden items-center rounded-[9999px] border border-[#e8e8e8] bg-white p-1 sm:flex">
-            <span className="rounded-[9999px] px-4 py-1.5 type-ui text-[#181925]">
+          <nav className="hidden items-center rounded-[100px] border border-[#efefef] bg-white p-1 shadow-[var(--shadow-subtle-2)] sm:flex">
+            <span className="rounded-[9999px] px-4 py-1.5 type-ui text-[#171618]">
               Research
             </span>
-            <span className="rounded-[9999px] px-4 py-1.5 type-ui text-[#999999]">
+            <span className="rounded-[9999px] px-4 py-1.5 type-ui text-[#727578]">
               Generate
             </span>
-            <span className="rounded-[9999px] px-4 py-1.5 type-ui text-[#999999]">
+            <span className="rounded-[9999px] px-4 py-1.5 type-ui text-[#727578]">
               Canvas
             </span>
           </nav>
 
           <div className="flex shrink-0 items-center gap-2">
+            <ExportNavMenu
+              title={topic}
+              topic={topic}
+              hook={hook}
+              image={image}
+              editorDocument={editorHistory.present}
+              disabled={loading}
+              onDownloadPng={handleDownload}
+              onExportDesignPack={() => void handleExportDesignPack()}
+              exportingDesignPack={exportingDesignPack}
+            />
+            <HistoryMenu
+              history={historyList}
+              onLoad={loadFromSession}
+              onDelete={(id) => {
+                deleteHistorySession(id);
+                setHistoryList(listHistory());
+              }}
+              onShare={handleShareLink}
+              onSave={() => void persistSession().then(() => toast.success("Session saved"))}
+            />
             {geminiStatus === "connected" ? (
-              <span className="inline-flex items-center gap-1.5 rounded-[9999px] border border-[#e8e8e8] bg-[#def6e4] px-3 py-1 type-caption font-medium text-[#33c758]">
+              <span className="inline-flex items-center gap-1.5 rounded-[100px] border border-[#efefef] bg-[#defafe] px-3 py-1 type-caption font-medium text-[#004d60]">
                 Gemini connected
               </span>
             ) : (
-              <span className="inline-flex items-center rounded-[9999px] border border-[#e8e8e8] bg-white px-3 py-1 type-caption font-medium text-[#666666]">
+              <span className="inline-flex items-center rounded-[9999px] border border-[#efefef] bg-white px-3 py-1 type-caption font-medium text-[#727578]">
                 Gemini: {geminiStatus}
               </span>
             )}
           </div>
         </div>
-        <div className="border-b border-[#e8e8e8]" />
+        <div className="border-b border-[#efefef]" />
       </header>
 
       <div className="mx-auto grid min-h-0 w-full max-w-[1600px] flex-1 grid-cols-1 gap-4 p-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)] sm:gap-5 sm:p-5">
         {/* Research — primary workspace */}
-        <aside className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-[16px] border border-[#e8e8e8] bg-white">
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-            <section className="space-y-4 border-b border-[#e8e8e8] p-5 sm:p-6">
-              <div className="flex flex-wrap items-start justify-between gap-3">
+        <aside className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-[20px] border-0 bg-white shadow-[var(--shadow-md)]">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain scrollbar-none">
+            <section className="space-y-3 border-b border-[#efefef] p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <h2 className="type-subheading text-[#181925]">Research</h2>
-                  <p className="mt-1 type-ui font-normal text-[#666666]">
+                  <h2 className="type-ui text-[#171618]">Research</h2>
+                  <p className="mt-0.5 type-caption text-[#727578]">
                     Rate refs with notes — like, dislike, then explore similar
                   </p>
                 </div>
-                <div className="flex items-center gap-2.5">
+                <div className="flex items-center gap-2">
                   <Checkbox
                     id="autoSelect"
                     checked={autoSelect}
                     onCheckedChange={(v) => setAutoSelect(v === true)}
                   />
-                  <Label htmlFor="autoSelect" className="cursor-pointer font-normal text-[#666666]">
+                  <Label htmlFor="autoSelect" className="cursor-pointer type-caption font-normal text-[#727578]">
                     Auto-select
                   </Label>
                 </div>
               </div>
 
-              <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr_auto] lg:items-end">
-                <div className="space-y-2">
+              <div className="grid gap-3 lg:grid-cols-[1.4fr_1fr_auto] lg:items-end">
+                <div className="space-y-1.5">
                   <Label htmlFor="topic">Video title / topic</Label>
-                  <Textarea
+                  <Input
                     id="topic"
-                    className="min-h-[72px]"
                     placeholder="e.g. How Alcohol Is Made in India | Inside the Factory"
                     value={topic}
                     onChange={(e) => setTopic(e.target.value)}
-                    rows={2}
                   />
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <Label htmlFor="channels">
-                    Channels <span className="font-normal text-[#999999]">(optional)</span>
+                    Channels <span className="font-normal text-[#727578]">(optional)</span>
                   </Label>
-                  <Textarea
+                  <Input
                     id="channels"
-                    className="min-h-[72px]"
-                    placeholder="Channel URLs, one per line"
+                    placeholder="@channel or youtube.com/@channel"
                     value={channels}
                     onChange={(e) => setChannels(e.target.value)}
-                    rows={2}
                   />
                 </div>
                 <Button
-                  size="lg"
-                  className="w-full lg:w-auto lg:min-w-[140px]"
+                  size="default"
+                  className="w-full lg:w-auto lg:min-w-[120px]"
                   onClick={handleResearch}
                   disabled={searching || exploring || !topic.trim()}
                 >
@@ -778,27 +1894,154 @@ export default function Home() {
               </div>
             </section>
 
-            <section className="space-y-4 p-5 sm:p-6">
-              {styleBrief && (
-                <div className="space-y-2 rounded-[16px] border border-[#e8e8e8] bg-[#fafafa] p-4">
-                  <p className="type-ui text-[#181925]">Quality direction</p>
-                  <p className="type-ui font-normal leading-relaxed text-[#666666] line-clamp-3">
-                    {styleBrief.summary}
-                  </p>
-                  <p className="type-caption text-[#999999]">
-                    Colors unlock after you like qualified references
-                  </p>
-                </div>
-              )}
+            <section className="space-y-4 p-4">
+              <MediaIntelligencePanel
+                youtubeUrl={mediaYoutubeUrl}
+                onYoutubeUrlChange={setMediaYoutubeUrl}
+                script={mediaScript}
+                onScriptChange={setMediaScript}
+                photos={mediaPhotos}
+                onUploadPhotos={(files) => void handleUploadMediaPhotos(files)}
+                onRemovePhoto={(id) =>
+                  setMediaPhotos((previous) => previous.filter((photo) => photo.id !== id))
+                }
+                openingFramesSlot={
+                  <OpeningFramesPanel
+                    useOpeningFrames={useOpeningFrames}
+                    onUseOpeningFramesChange={setUseOpeningFrames}
+                    openingFrames={openingFrames}
+                    onUpload={(file) => void streamOpeningFrame(file)}
+                    onYoutubeUrl={(url) => ingestYoutubeUrl(url)}
+                    onRemove={(id) => {
+                      videoFilesRef.current.delete(id);
+                      setOpeningFrames((previous) =>
+                        previous.filter((clip) => clip.id !== id)
+                      );
+                    }}
+                    onSelectFrame={selectOpeningFrame}
+                    inputId="opening-video-upload-research"
+                  />
+                }
+                analyzing={analyzingMedia}
+                analysisProgress={mediaAnalysisProgress}
+                result={mediaIntelligence}
+                selectedHook={hook}
+                onSelectHook={setHook}
+                onAnalyze={() => void handleAnalyzeMedia()}
+                canAnalyze={Boolean(
+                  topic.trim() ||
+                    mediaYoutubeUrl.trim() ||
+                    mediaScript.trim() ||
+                    mediaPhotos.length ||
+                    readyOpeningFrames.length
+                )}
+              />
 
-              {(inspirations.length > 0 || likedVideos.length > 0) && (
+              <ChannelProfilePanel
+                channelInput={channelProfileInput}
+                topic={topic}
+                profile={channelProfile}
+                loading={analyzingChannel}
+                onChannelInputChange={setChannelProfileInput}
+                onAnalyze={() => void handleAnalyzeChannelProfile()}
+                onClear={() => {
+                  setChannelProfile(null);
+                  setChannelProfileInput("");
+                }}
+              />
+
+              <BrandLanguagePanel language={brandLanguage} onChange={setBrandLanguage} />
+
+              <div className="space-y-2 rounded-[20px] border border-[#efefef] bg-[#f7f7f7] p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Label htmlFor="master-prompt" className="type-ui text-[#171618]">
+                    Quality direction
+                  </Label>
+                  <button
+                    type="button"
+                    className="type-caption text-[#38296c] hover:underline"
+                    onClick={() => setMasterPrompt(DEFAULT_MASTER_PROMPT)}
+                  >
+                    Reset default
+                  </button>
+                </div>
+                <Textarea
+                  id="master-prompt"
+                  value={masterPrompt}
+                  onChange={(e) => setMasterPrompt(e.target.value)}
+                  rows={8}
+                  className="min-h-[140px] resize-y bg-white type-ui font-normal leading-relaxed text-[#727578]"
+                  placeholder="Master quality / anti-slop prompt used for every generation…"
+                />
+
+                <div className="space-y-2 border-t border-[#efefef] pt-3">
+                  <p className="type-ui text-[#171618]">Composition factors</p>
+                  <p className="type-caption text-[#727578]">
+                    Classic framing rules for the hook visual (first look)
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {COMPOSITION_FACTORS.map((factor) => {
+                      const active = compositionFactors.includes(factor.id);
+                      return (
+                        <button
+                          key={factor.id}
+                          type="button"
+                          title={factor.prompt}
+                          onClick={() =>
+                            setCompositionFactors((prev) =>
+                              prev.includes(factor.id)
+                                ? prev.filter((id) => id !== factor.id)
+                                : [...prev, factor.id]
+                            )
+                          }
+                          className={cn(
+                            "rounded-[9999px] border px-3 py-1.5 type-caption transition-colors",
+                            active
+                              ? "border-[#171618] bg-[#171618] text-white"
+                              : "border-[#efefef] bg-white text-[#727578] hover:bg-[#f7f7f7]"
+                          )}
+                        >
+                          {factor.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {styleBrief?.summary && (
+                  <p className="type-caption text-[#727578]">
+                    Research note: {styleBrief.summary}
+                  </p>
+                )}
+                <p className="type-caption text-[#727578]">
+                  Colors come from analyzed media or liked qualified references
+                </p>
+              </div>
+
+              {(inspirations.length > 0 ||
+                likedVideos.length > 0 ||
+                palettes.length > 0 ||
+                Boolean(mediaIntelligence)) && (
                 <PalettePicker
                   palettes={palettes}
                   selectedId={selectedPaletteId}
                   loading={suggestingPalettes}
                   hasLikes={likedVideos.length > 0}
+                  hasMediaColors={Boolean(mediaIntelligence?.palettes.length)}
+                  sourceLabel={
+                    mediaIntelligence?.colors.source === "measured"
+                      ? "Measured from supplied media"
+                      : mediaIntelligence
+                        ? "Neutral fallback from content context"
+                      : "Extracted from liked thumbs"
+                  }
                   paletteRatings={paletteRatings}
                   onSelect={(p) => {
+                    setSelectedPaletteId(p.id);
+                    setStyleBrief((prev) => applyPaletteToBrief(prev, p) || prev);
+                  }}
+                  onUpdate={(p) => {
+                    setPalettes((prev) => prev.map((x) => (x.id === p.id ? p : x)));
                     setSelectedPaletteId(p.id);
                     setStyleBrief((prev) => applyPaletteToBrief(prev, p) || prev);
                   }}
@@ -814,13 +2057,13 @@ export default function Home() {
 
               {(inspirations.length > 0 || searching) && (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between type-caption text-[#999999]">
+                  <div className="flex items-center justify-between type-caption text-[#727578]">
                     <span>
                       {inspirations.length} results
                       {searchSource ? ` · ${searchSource}` : ""}
                       {exploreLabel && !exploring ? ` · similar to “${exploreLabel}”` : ""}
                     </span>
-                    <span className="font-medium text-[#181925]">
+                    <span className="font-medium text-[#171618]">
                       {selectedIds.size} selected
                     </span>
                   </div>
@@ -844,58 +2087,84 @@ export default function Home() {
               )}
 
               {!inspirations.length && !searching && (
-                <div className="rounded-[16px] border border-[#e8e8e8] bg-[#fafafa] px-6 py-16 text-center">
-                  <p className="type-ui text-[#181925]">No references yet</p>
-                  <p className="mt-2 type-ui font-normal text-[#666666]">
-                    Enter a topic and run research. Like / dislike opens a note dialog.
+                <div className="rounded-[12px] border border-[#efefef] bg-[#f7f7f7] px-4 py-6 text-center">
+                  <p className="type-ui text-[#171618]">No references yet</p>
+                  <p className="mt-1 type-caption text-[#727578]">
+                    Optional — enter a topic and hit Generate to start from scratch, or Research for
+                    reference thumbs.
                   </p>
                 </div>
               )}
             </section>
           </div>
 
-          <section className="shrink-0 space-y-3 border-t border-[#e8e8e8] bg-white p-5 sm:p-6">
-            <div className="flex flex-wrap items-end justify-between gap-3">
-              <div>
-                <h2 className="type-subheading text-[#181925]">Generate</h2>
-                <p className="mt-1 type-ui font-normal text-[#666666]">
-                  Hook + options from selected refs
+          <section className="shrink-0 space-y-2 border-t border-[#efefef] bg-white px-3 py-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0">
+                <h2 className="type-ui text-[#171618]">Generate</h2>
+                <p className="type-caption text-[#727578]">
+                  From topic alone, or with optional refs / media
                 </p>
               </div>
-              <Button
-                type="submit"
-                form="generate-form"
-                size="default"
-                disabled={loading || !topic.trim() || (selectedIds.size === 0 && !image)}
-              >
-                {loading ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" />
-                    Generating…
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="size-4" />
-                    Generate
-                  </>
-                )}
-              </Button>
+              <div className="flex items-center gap-1.5">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  disabled={suggestingPalettes || likedVideos.length === 0}
+                  onClick={() => void suggestPalettes()}
+                >
+                  {suggestingPalettes ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <RefreshCw className="size-3.5" />
+                  )}
+                  Resuggest
+                </Button>
+                <Button
+                  type="submit"
+                  form="generate-form"
+                  size="sm"
+                  className="h-8"
+                  disabled={loading || !topic.trim()}
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="size-3.5 animate-spin" />
+                      Generating…
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="size-3.5" />
+                      Generate
+                    </>
+                  )}
+                </Button>
+              </div>
             </div>
 
-            <form id="generate-form" onSubmit={handleGenerate} className="grid gap-3 sm:grid-cols-4">
-              <div className="space-y-2 sm:col-span-1">
-                <Label htmlFor="hook">Hook</Label>
+            <form
+              id="generate-form"
+              onSubmit={handleGenerate}
+              className="grid gap-1.5 sm:grid-cols-4"
+            >
+              <div className="space-y-1 sm:col-span-1">
+                <Label htmlFor="hook" className="type-caption text-[#727578]">
+                  Hook
+                </Label>
                 <Input
                   id="hook"
+                  className="h-8"
                   placeholder='e.g. "HOW IT&apos;S MADE"'
                   value={hook}
                   onChange={(e) => setHook(e.target.value)}
                 />
               </div>
-              <div className="min-w-0 space-y-2">
-                <Label>Composition</Label>
+              <div className="min-w-0 space-y-1">
+                <Label className="type-caption text-[#727578]">Composition</Label>
                 <Select value={composition} onValueChange={(v) => v && setComposition(v)}>
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger className="h-8 w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -907,10 +2176,10 @@ export default function Home() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="min-w-0 space-y-2">
-                <Label>Resolution</Label>
+              <div className="min-w-0 space-y-1">
+                <Label className="type-caption text-[#727578]">Resolution</Label>
                 <Select value={imageSize} onValueChange={(v) => v && setImageSize(v)}>
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger className="h-8 w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -922,10 +2191,10 @@ export default function Home() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="min-w-0 space-y-2">
-                <Label>Model</Label>
+              <div className="min-w-0 space-y-1">
+                <Label className="type-caption text-[#727578]">Model</Label>
                 <Select value={model} onValueChange={(v) => v && setModel(v)}>
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger className="h-8 w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -939,8 +2208,125 @@ export default function Home() {
               </div>
             </form>
 
+            {palettes.length > 0 ? (
+              <div className="space-y-1.5 border-t border-[#efefef] pt-2">
+                <div
+                  className="flex gap-1.5 overflow-x-auto pb-0.5"
+                  role="radiogroup"
+                  aria-label="Active palette"
+                >
+                  {palettes.map((p) => {
+                    const active = selectedPaletteId === p.id;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        onClick={() => {
+                          setSelectedPaletteId(p.id);
+                          setStyleBrief((prev) => applyPaletteToBrief(prev, p) || prev);
+                        }}
+                        className={cn(
+                          "flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-1 transition-colors",
+                          active
+                            ? "border-[#171618] bg-[#171618] text-white"
+                            : "border-[#efefef] bg-white text-[#727578] hover:border-[#727578]"
+                        )}
+                      >
+                        <span className="flex gap-0.5">
+                          {p.colors.slice(0, 4).map((c, i) => (
+                            <span
+                              key={`${p.id}-chip-${i}`}
+                              className="size-2.5 rounded-full border border-white/40"
+                              style={{ background: c.startsWith("#") ? c : `#${c}` }}
+                            />
+                          ))}
+                        </span>
+                        <span className="type-caption font-medium">{p.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {selectedPalette && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {selectedPalette.colors.map((c, index) => (
+                      <ColorPicker
+                        key={`${selectedPalette.id}-${index}`}
+                        compact
+                        label={`Color ${index + 1}`}
+                        value={c.startsWith("#") ? c : `#${c}`}
+                        onChange={(hex) => {
+                          const next = {
+                            ...selectedPalette,
+                            colors: selectedPalette.colors.map((color, i) =>
+                              i === index ? hex : color
+                            ),
+                            name: /custom/i.test(selectedPalette.name)
+                              ? selectedPalette.name
+                              : `${selectedPalette.name} · custom`,
+                          };
+                          setPalettes((prev) =>
+                            prev.map((x) => (x.id === next.id ? next : x))
+                          );
+                          setStyleBrief((prev) => applyPaletteToBrief(prev, next) || prev);
+                        }}
+                      />
+                    ))}
+                    {selectedPalette.rationale && (
+                      <span className="min-w-0 flex-1 truncate type-caption text-[#727578]">
+                        {selectedPalette.rationale}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              (selectedPalette || styleBrief?.colorPalette?.length) && (
+                <div className="flex flex-wrap items-center gap-2 border-t border-[#efefef] pt-2">
+                  <span className="type-caption text-[#727578]">
+                    {selectedPalette ? selectedPalette.name : "Palette"}
+                  </span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {(selectedPalette?.colors || styleBrief?.colorPalette || []).map((c, index) => (
+                      <ColorPicker
+                        key={`${selectedPalette?.id || "brief"}-${index}`}
+                        compact
+                        label={`Color ${index + 1}`}
+                        value={c.startsWith("#") ? c : `#${c}`}
+                        onChange={(hex) => {
+                          if (selectedPalette) {
+                            const next = {
+                              ...selectedPalette,
+                              colors: selectedPalette.colors.map((color, i) =>
+                                i === index ? hex : color
+                              ),
+                              name: /custom/i.test(selectedPalette.name)
+                                ? selectedPalette.name
+                                : `${selectedPalette.name} · custom`,
+                            };
+                            setPalettes((prev) =>
+                              prev.map((x) => (x.id === next.id ? next : x))
+                            );
+                            setStyleBrief((prev) => applyPaletteToBrief(prev, next) || prev);
+                            return;
+                          }
+                          if (styleBrief?.colorPalette?.length) {
+                            const colors = styleBrief.colorPalette.map((color, i) =>
+                              i === index ? hex : color
+                            );
+                            setStyleBrief({ ...styleBrief, colorPalette: colors });
+                          }
+                        }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )
+            )}
+
             {error && (
-              <p className="rounded-[8px] border border-[#e8e8e8] bg-[#fafafa] px-4 py-3 type-ui font-normal text-[#666666]">
+              <p className="rounded-[8px] border border-[#efefef] bg-[#f7f7f7] px-3 py-2 type-caption text-[#727578]">
                 {error}
               </p>
             )}
@@ -969,14 +2355,23 @@ export default function Home() {
             iterations={iterations}
             onPickIteration={handlePickIteration}
             onDownload={handleDownload}
+            onExportDesignPack={() => void handleExportDesignPack()}
+            exportingDesignPack={exportingDesignPack}
             assets={assets}
             onAssetsChange={setAssets}
+            hook={hook}
+            editorHistory={editorHistory}
+            onEditorHistoryChange={setEditorHistory}
+            selectedLayerId={selectedLayerId}
+            onSelectLayer={setSelectedLayerId}
             generatedVariants={generatedVariants}
             onPickVariant={(v) => {
               setImage(v.image);
               setBackend("");
               setCanvasTab("preview");
             }}
+            paletteColors={selectedPalette?.colors || styleBrief?.colorPalette || []}
+            paletteName={selectedPalette?.name}
           />
         </div>
       </div>
@@ -1020,7 +2415,13 @@ export default function Home() {
       <StatusDialog
         open={loading}
         title="Generating combinations"
-        message="Building 3–4 variants from liked thumbs + selected palette…"
+        message={
+          mediaIntelligence
+            ? "Using media context, measured colors, and selected thumbnail hook…"
+            : useOpeningFrames
+            ? "Using full-video stills + building variants…"
+            : "Building 3–4 variants from liked thumbs + selected palette…"
+        }
       />
 
       <StatusDialog

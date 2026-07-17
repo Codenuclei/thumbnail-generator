@@ -5,7 +5,7 @@ import {
 } from "@/lib/palette-suggestions";
 import type { InspirationVideo, ThumbnailFeedback } from "@/lib/inspiration";
 
-export const maxDuration = 60;
+export const maxDuration = 90;
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
@@ -41,6 +41,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       palettes: result.palettes,
       styleBrief: result.styleBrief,
+      source: result.source,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Palette suggestion failed";

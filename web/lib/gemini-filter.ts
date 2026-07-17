@@ -1,6 +1,8 @@
 import type { ScrapedVideo } from "@/lib/apify-youtube";
 import type { StyleBrief } from "@/lib/style-intelligence";
 import { parseChannelHandles, videoFromReferenceChannel } from "@/lib/title-relevance";
+import { TARGET_RESULTS } from "@/lib/apify-youtube";
+import { runtimeEnv } from "@/lib/runtime-env";
 
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const FILTER_MODEL = "gemini-2.5-flash";
@@ -59,12 +61,13 @@ function buildCatalog(videos: ScrapedVideo[], channelHandles: string[]): string 
 export async function filterAndCurateWithGemini(
   topic: string,
   videos: ScrapedVideo[],
-  options?: { channelsRaw?: string; hook?: string; strict?: boolean }
+  options?: { channelsRaw?: string; hook?: string; strict?: boolean; targetCount?: number }
 ): Promise<GeminiFilterResult> {
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   const channelHandles = parseChannelHandles(options?.channelsRaw);
   const hook = options?.hook;
   const strict = options?.strict !== false;
+  const targetCount = options?.targetCount ?? TARGET_RESULTS;
 
   if (!videos.length) {
     return {
@@ -78,7 +81,7 @@ export async function filterAndCurateWithGemini(
   }
 
   if (!apiKey) {
-    const sorted = [...videos].sort((a, b) => b.viewCount - a.viewCount).slice(0, 6);
+    const sorted = [...videos].sort((a, b) => b.viewCount - a.viewCount).slice(0, targetCount);
     return {
       videos: sorted,
       styleBrief: emptyBrief(topic, hook),
@@ -99,12 +102,12 @@ Topic: "${topic}"
 ${channelNote}
 ${hook ? `Hook: "${hook}"` : ""}
 
-Candidates:
+Candidates (already filtered to landscape / non-Shorts videos via YouTube search):
 ${buildCatalog(videos, channelHandles)}
 
 Score EACH video: topicRelevance (0-10), productionQuality (0-10), brandImpression (0-10).
 
-STRICT KEEP rules (all required):
+KEEP rules:
 - topicRelevance >= ${strict ? 7 : 6}
 - productionQuality >= ${strict ? 7 : 6}
 - brandImpression >= ${strict ? 7 : 6}
@@ -112,6 +115,8 @@ STRICT KEEP rules (all required):
 - NEVER keep: clickbait, shock faces, pranks, reactions, amateur layout, muddy colors, off-topic, low-effort thumbnails
 
 Reference channel videos: topicRelevance >= 7 or REJECT.
+
+Keep exactly ${targetCount} of the highest-scoring premium thumbnails. If fewer qualify, keep all that pass — never pad with low quality.
 
 Also generate titleSuggestions — 6 YouTube video title ideas inspired by the BEST kept videos (same quality bar, searchable, premium tone).
 
@@ -143,7 +148,7 @@ Return ONLY JSON:
         contents: [{ role: "user", parts: [{ text: prompt }] }],
         generationConfig: { temperature: 0.1, maxOutputTokens: 1600 },
       }),
-      signal: AbortSignal.timeout(22_000),
+      signal: AbortSignal.timeout(35_000),
     });
 
     if (!res.ok) throw new Error(`gemini filter ${res.status}`);
@@ -182,7 +187,7 @@ Return ONLY JSON:
       kept.slice(0, 3).map((v) => v.title);
 
     return {
-      videos: kept.slice(0, 12),
+      videos: kept.slice(0, targetCount),
       styleBrief,
       titleSuggestions,
       filteredCount: videos.length - kept.length,
@@ -194,7 +199,7 @@ Return ONLY JSON:
     };
   } catch (err) {
     console.error("Gemini filter error:", err);
-    const sorted = [...videos].sort((a, b) => b.viewCount - a.viewCount).slice(0, 4);
+    const sorted = [...videos].sort((a, b) => b.viewCount - a.viewCount).slice(0, targetCount);
     return {
       videos: sorted,
       styleBrief: emptyBrief(topic, hook),

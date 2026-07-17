@@ -1,11 +1,12 @@
-import { tryApifyScrape, type ScrapedVideo } from "@/lib/apify-youtube";
-import { searchReferenceChannels } from "@/lib/channel-search";
+import {
+  searchLongFormViaYtsr,
+  SEARCH_POOL_SIZE,
+} from "@/lib/ytsr-search";
+import { TARGET_RESULTS, type ScrapedVideo } from "@/lib/apify-youtube";
 import { filterAndCurateWithGemini } from "@/lib/gemini-filter";
-import { parseChannelHandles } from "@/lib/title-relevance";
-import { buildExpandedSearchQueries } from "@/lib/search-queries";
-import { searchInnerTube } from "@/lib/youtube-search";
 import { buildVideoMappings, type VideoContentMapping } from "@/lib/video-mapping";
-import type { InspirationVideo } from "@/lib/inspiration";
+import type { StyleBrief } from "@/lib/style-intelligence";
+import { buildExpandedSearchQueries } from "@/lib/search-queries";
 
 export type SearchProgressEvent =
   | { type: "status"; step: string; message: string }
@@ -13,8 +14,8 @@ export type SearchProgressEvent =
   | { type: "mappings"; mappings: VideoContentMapping[] }
   | {
       type: "complete";
-      results: InspirationVideo[];
-      styleBrief: Awaited<ReturnType<typeof filterAndCurateWithGemini>>["styleBrief"];
+      results: ScrapedVideo[];
+      styleBrief: StyleBrief;
       titleSuggestions: string[];
       filteredCount: number;
       qualityRejected: number;
@@ -24,35 +25,6 @@ export type SearchProgressEvent =
     }
   | { type: "error"; message: string };
 
-function toScraped(
-  results: Array<{
-    videoId: string;
-    title: string;
-    channel: string;
-    viewCount: number;
-    thumbnailUrl: string;
-  }>
-): ScrapedVideo[] {
-  return results.map((r) => ({
-    ...r,
-    description: "",
-    url: `https://www.youtube.com/watch?v=${r.videoId}`,
-  }));
-}
-
-function mergeVideos(...lists: ScrapedVideo[][]): ScrapedVideo[] {
-  const seen = new Set<string>();
-  const merged: ScrapedVideo[] = [];
-  for (const list of lists) {
-    for (const v of list) {
-      if (seen.has(v.videoId)) continue;
-      seen.add(v.videoId);
-      merged.push(v);
-    }
-  }
-  return merged;
-}
-
 export async function runSearchPipeline(
   title: string,
   options?: { channels?: string; hook?: string; onProgress?: (e: SearchProgressEvent) => void }
@@ -60,56 +32,50 @@ export async function runSearchPipeline(
   const emit = options?.onProgress || (() => {});
   const channels = options?.channels;
   const hook = options?.hook;
-  const hasChannels = Boolean(parseChannelHandles(channels).length);
   const queries = buildExpandedSearchQueries(title, hook);
 
-  emit({ type: "status", step: "search", message: "Searching Apify, channels, and YouTube…" });
-
-  const innerBatches = await Promise.all(
-    queries.slice(0, 4).map((q) =>
-      searchInnerTube(q).catch(() => [])
-    )
-  );
-  const innerTube = innerBatches.flat();
-
   emit({
-    type: "candidates",
-    count: innerTube.length,
-    videos: toScraped(innerTube).slice(0, 12),
+    type: "status",
+    step: "search",
+    message: "YouTube search — landscape videos only…",
   });
 
-  const [apifyVideos, channelVideos] = await Promise.all([
-    tryApifyScrape(title, { channels }),
-    hasChannels && channels ? searchReferenceChannels(title, channels) : Promise.resolve([]),
-  ]);
+  const pool = await searchLongFormViaYtsr(title, {
+    channels,
+    hook,
+    target: SEARCH_POOL_SIZE,
+  });
 
-  const merged = mergeVideos(
-    apifyVideos || [],
-    channelVideos,
-    toScraped(innerTube)
-  );
-
-  if (!merged.length) {
-    throw new Error("No thumbnails found — try a shorter title.");
+  if (!pool.length) {
+    throw new Error(
+      channels
+        ? "No landscape videos found for that topic and channel — try a broader topic or check the channel URL."
+        : "No landscape videos found — try a broader topic."
+    );
   }
 
   emit({
     type: "candidates",
-    count: merged.length,
-    videos: merged.slice(0, 20),
+    count: pool.length,
+    videos: pool.slice(0, 20),
   });
 
   emit({ type: "status", step: "map", message: "Mapping thumbnails to opening scripts…" });
-  const mappings = await buildVideoMappings(merged, title, 8);
+  const mappings = await buildVideoMappings(pool, title, 8);
   emit({ type: "mappings", mappings });
 
-  emit({ type: "status", step: "filter", message: "Gemini quality filter…" });
-  const result = await filterAndCurateWithGemini(title, merged, { channelsRaw: channels, hook });
+  emit({
+    type: "status",
+    step: "filter",
+    message: `Gemini quality filter — picking ${TARGET_RESULTS} premium thumbnails…`,
+  });
 
-  const sourceParts: string[] = [];
-  if (apifyVideos?.length) sourceParts.push("apify");
-  if (channelVideos.length) sourceParts.push("channels");
-  sourceParts.push("expanded-search", "gemini-dynamic-filter");
+  const result = await filterAndCurateWithGemini(title, pool, {
+    channelsRaw: channels,
+    hook,
+    strict: false,
+    targetCount: TARGET_RESULTS,
+  });
 
   const complete = {
     type: "complete" as const,
@@ -119,7 +85,7 @@ export async function runSearchPipeline(
     filteredCount: result.filteredCount,
     qualityRejected: result.qualityRejected,
     channelStats: result.channelStats,
-    source: sourceParts.join("+"),
+    source: "ytsr-landscape+gemini-quality",
     queries,
   };
   emit(complete);

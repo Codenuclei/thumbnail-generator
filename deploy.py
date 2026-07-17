@@ -137,6 +137,20 @@ def main() -> None:
     if apify_token:
         set_env_var(mgmt_key, "APIFY_API_TOKEN", apify_token)
     set_env_var(mgmt_key, "COH_APPLICATION_KEY", app_key)
+    tenant_id = coh.get("tenant_id") or ""
+    if tenant_id:
+        set_env_var(mgmt_key, "COH_TENANT_ID", tenant_id)
+    set_env_var(mgmt_key, "COOKIE_SECURE", "1")
+
+    for key in (
+        "CANVA_CLIENT_ID",
+        "CANVA_CLIENT_SECRET",
+        "FIGMA_CLIENT_ID",
+        "FIGMA_CLIENT_SECRET",
+        "FIGMA_ACCESS_TOKEN",
+    ):
+        if env.get(key):
+            set_env_var(mgmt_key, key, env[key])
 
     print("Collecting web files...")
     files = collect_files(WEB)

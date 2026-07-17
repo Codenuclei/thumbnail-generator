@@ -8,30 +8,29 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        /* Primary CTA — lavender only here */
+        /* Cycle primary CTA — pure black fill */
         default:
-          "rounded-[9999px] border-0 bg-[#918df6] text-white shadow-[var(--shadow-subtle)] hover:bg-[#9580ff]",
-        /* Outline secondary */
+          "rounded-[8px] border-0 bg-[#000000] text-white shadow-[var(--shadow-subtle)] hover:bg-[#171618]",
+        /* Ghost / outlined secondary */
         outline:
-          "rounded-[9999px] border border-[#e8e8e8] bg-white text-[#666666] shadow-[var(--shadow-subtle-2)] hover:bg-[#f5f5f5] hover:text-[#181925]",
+          "rounded-[8px] border border-[#171618] bg-transparent text-[#171618] hover:bg-[#f7f7f7]",
         secondary:
-          "rounded-[9999px] border-0 bg-[#f5f5f5] text-[#666666] hover:bg-[#e8e8e8]",
-        /* Ghost — no border, graphite */
+          "rounded-[8px] border border-[#efefef] bg-white text-[#727578] hover:bg-[#f7f7f7] hover:text-[#171618]",
         ghost:
-          "rounded-[9999px] border-0 bg-transparent text-[#666666] hover:bg-[#f5f5f5] hover:text-[#181925]",
+          "rounded-[8px] border-0 bg-transparent text-[#727578] hover:bg-[#f7f7f7] hover:text-[#171618]",
         destructive:
-          "rounded-[9999px] border-0 bg-[#ff3e00]/10 text-[#ff3e00] hover:bg-[#ff3e00]/15",
-        link: "rounded-none border-0 bg-transparent px-3 text-[#181925] underline-offset-4 hover:underline",
+          "rounded-[8px] border-0 bg-[#fff1ec] text-[#772914] hover:bg-[#feedcc]",
+        link: "rounded-none border-0 bg-transparent px-3 text-[#171618] underline-offset-4 hover:underline",
       },
       size: {
-        default: "h-10 px-5 py-2.5",
+        default: "h-10 px-[22px] py-[10px]",
         xs: "h-7 px-3 text-[12px] [&_svg:not([class*='size-'])]:size-3",
         sm: "h-8 px-3.5",
         lg: "h-11 px-6",
-        icon: "size-10 rounded-[9999px]",
-        "icon-xs": "size-7 rounded-[9999px] [&_svg:not([class*='size-'])]:size-3",
-        "icon-sm": "size-8 rounded-[9999px]",
-        "icon-lg": "size-11 rounded-[9999px]",
+        icon: "size-10 rounded-[8px]",
+        "icon-xs": "size-7 rounded-[8px] [&_svg:not([class*='size-'])]:size-3",
+        "icon-sm": "size-8 rounded-[8px]",
+        "icon-lg": "size-11 rounded-[8px]",
       },
     },
     defaultVariants: {
