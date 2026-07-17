@@ -1531,6 +1531,8 @@ export default function Home() {
         mediaIntelligence: intelligenceForGeneration(mediaIntelligence),
         brandLanguage,
         channelProfile: channelProfile || undefined,
+        userBrief: mediaScript.trim() || undefined,
+        userMediaPhotoCount: mediaPhotos.length || undefined,
         iterationNote: opts?.iterationNote,
         iterationIndex: opts?.iterationIndex,
         baseImage: compressedBase ?? opts?.baseImage?.replace(/^data:[^;]+;base64,/, ""),
@@ -2090,7 +2092,8 @@ export default function Home() {
                 <div className="rounded-[12px] border border-[#efefef] bg-[#f7f7f7] px-4 py-6 text-center">
                   <p className="type-ui text-[#171618]">No references yet</p>
                   <p className="mt-1 type-caption text-[#727578]">
-                    Optional — enter a topic and hit Generate to start from scratch, or Research for
+                    Optional — enter a topic and hit Generate to start from scratch. Add photos +
+                    a brief in Media intelligence for image-grounded scratch, or Research for
                     reference thumbs.
                   </p>
                 </div>
@@ -2103,7 +2106,7 @@ export default function Home() {
               <div className="min-w-0">
                 <h2 className="type-ui text-[#171618]">Generate</h2>
                 <p className="type-caption text-[#727578]">
-                  From topic alone, or with optional refs / media
+                  Topic alone, or Media brief + photos (Analyze optional)
                 </p>
               </div>
               <div className="flex items-center gap-1.5">

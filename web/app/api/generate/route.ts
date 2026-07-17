@@ -82,6 +82,11 @@ export async function POST(req: NextRequest) {
       : undefined;
     const brandLanguage = body.brandLanguage as BrandLanguage | undefined;
     const channelProfile = body.channelProfile as ChannelProfile | undefined;
+    const userBrief = body.userBrief ? String(body.userBrief).trim() : "";
+    const userMediaPhotoCount = Math.max(
+      0,
+      Math.min(8, Number(body.userMediaPhotoCount) || 0)
+    );
     const selectedIds = new Set<string>(
       inspirations.map((i: InspirationVideo) => i.videoId)
     );
@@ -155,6 +160,8 @@ export async function POST(req: NextRequest) {
         mediaIntelligence,
         brandLanguage,
         channelProfile,
+        userBrief: userBrief || undefined,
+        userMediaPhotoCount: userMediaPhotoCount || undefined,
       });
       const result = await generateThumbnail(prompt, model, [], imageSize, false, allAssets);
       return NextResponse.json({
@@ -236,6 +243,8 @@ export async function POST(req: NextRequest) {
         mediaIntelligence,
         brandLanguage,
         channelProfile,
+        userBrief: userBrief || undefined,
+        userMediaPhotoCount: userMediaPhotoCount || undefined,
       });
       return {
         id: `v${i + 1}`,

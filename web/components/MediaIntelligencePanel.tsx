@@ -128,7 +128,7 @@ export function MediaIntelligencePanel({
             Media intelligence
           </h3>
           <p className="type-caption text-[#727578]">
-            Video, photos, script → hooks & colors
+            Photos + brief → Generate (Analyze optional)
           </p>
         </div>
         {result && (
@@ -233,7 +233,7 @@ export function MediaIntelligencePanel({
               ))}
             </div>
           ) : (
-            <p className="type-caption text-[#727578]">Product / person / style refs</p>
+            <p className="type-caption text-[#727578]">Product / person / style refs for scratch generate</p>
           )}
         </div>
       </div>
@@ -241,7 +241,7 @@ export function MediaIntelligencePanel({
       <div className="space-y-1">
         <div className="flex items-center justify-between gap-2">
           <Label htmlFor="media-script" className="type-caption text-[#727578]">
-            Paste script
+            Creative brief / script
           </Label>
           <span className="type-caption text-[#727578]">
             {transcriptMeta || `${script.trim().length.toLocaleString()} chars`}
@@ -256,7 +256,7 @@ export function MediaIntelligencePanel({
           }}
           rows={3}
           className="min-h-[72px] resize-y bg-white type-caption"
-          placeholder="Script, outline, transcript, or voiceover… or Fetch transcript from the URL above"
+          placeholder="Describe the thumbnail you want, or paste script/outline… Used on Generate even without Analyze. Or Fetch transcript from the URL above."
         />
       </div>
 

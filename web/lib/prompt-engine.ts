@@ -116,6 +116,10 @@ export function buildUltraPrompt(
     primaryVideoFrame?: boolean;
     /** Structured analysis grounded in supplied script, photos, frames, and YouTube context. */
     mediaIntelligence?: GenerationMediaIntelligence;
+    /** Freeform creative brief / script from Media intelligence (works without Analyze). */
+    userBrief?: string;
+    /** User uploaded media photos attached as image assets. */
+    userMediaPhotoCount?: number;
     /** Approved/avoided phrases and visual grammar. */
     brandLanguage?: BrandLanguage;
     /** Evidence-backed main channel visual language. */
@@ -135,6 +139,21 @@ export function buildUltraPrompt(
 
   if (options.compositionFactors?.length) {
     lines.push(compositionFactorsPrompt(options.compositionFactors));
+  }
+
+  const userBrief = (options.userBrief || "").trim();
+  if (userBrief) {
+    lines.push(
+      "USER BRIEF (follow this creative direction for the thumbnail — subject, scene, text ideas, mood):",
+      userBrief.length > 2500 ? `${userBrief.slice(0, 2500)}…` : userBrief
+    );
+  }
+
+  const photoCount = options.userMediaPhotoCount || 0;
+  if (photoCount > 0) {
+    lines.push(
+      `USER MEDIA PHOTOS (${photoCount}): Attached image(s) labeled "Media photo" are the user's own refs (product, person, scene, or style). Ground the thumbnail in these — keep recognizable likeness/product identity. Research thumbs are style-only.`
+    );
   }
 
   if (options.mediaIntelligence) {
@@ -262,10 +281,20 @@ export function buildUltraPrompt(
     !options.mediaIntelligence &&
     !options.primaryVideoFrame &&
     !options.useOpeningFrames &&
-    !options.iterationNote
+    !options.iterationNote &&
+    !userBrief &&
+    photoCount === 0
   ) {
     lines.push(
       "SCRATCH MODE: No reference thumbnails provided. Invent a strong original YouTube thumbnail from the topic/hook alone — bold phone-readable text, clear subject, high contrast, 16:9 documentary energy. Do not copy a known channel's art."
+    );
+  } else if (
+    !options.inspirations?.length &&
+    (userBrief || photoCount > 0) &&
+    !options.mediaIntelligence
+  ) {
+    lines.push(
+      "SCRATCH + USER MEDIA: Build an original thumbnail from the topic, user brief, and/or attached media photos — no research references required."
     );
   }
 
