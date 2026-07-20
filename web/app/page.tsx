@@ -69,6 +69,10 @@ import {
   type StudioSession,
 } from "@/lib/studio-history";
 import { takeShareHandoff } from "@/lib/share-handoff";
+import {
+  rememberSharedSession,
+  syncLocalHistoryToCloud,
+} from "@/lib/cloud-history-sync";
 import { createEmptyDocument } from "@/lib/editor-types";
 import { createEditorHistory, type EditorHistory } from "@/lib/editor-history";
 import {
@@ -811,16 +815,29 @@ export default function Home() {
     }
     if (handoff) {
       applySharePayload(handoff.payload);
-      if (handoff.slug) setShareSlug(handoff.slug);
+      if (handoff.slug) {
+        setShareSlug(handoff.slug);
+        rememberSharedSession(handoff.payload, handoff.slug);
+        setHistoryList(listHistory());
+      }
       toast.success("Shared session loaded");
-      return;
+    } else if (legacyToken) {
+      void decodeShareUrl(legacyToken).then((payload) => {
+        if (!payload) return;
+        applySharePayload(payload);
+        toast.success("Shared session loaded");
+        window.history.replaceState({}, "", window.location.pathname);
+      });
     }
-    if (!legacyToken) return;
-    void decodeShareUrl(legacyToken).then((payload) => {
-      if (!payload) return;
-      applySharePayload(payload);
-      toast.success("Shared session loaded");
-      window.history.replaceState({}, "", window.location.pathname);
+
+    // Backfill older localStorage saves into Cohesivity short /s/ links.
+    void syncLocalHistoryToCloud({ draft }).then((stats) => {
+      setHistoryList(listHistory());
+      if (stats.pushed > 0) {
+        toast.success(
+          `Synced ${stats.pushed} saved session${stats.pushed === 1 ? "" : "s"} to short links`
+        );
+      }
     });
   }, []);
 

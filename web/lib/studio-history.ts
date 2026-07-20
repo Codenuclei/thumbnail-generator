@@ -105,10 +105,19 @@ export function listHistory(): StudioSession[] {
   }
 }
 
-export function saveHistorySession(session: StudioSession): void {
+export function saveHistorySession(
+  session: StudioSession,
+  options?: { bumpUpdatedAt?: boolean }
+): void {
   if (typeof window === "undefined") return;
+  const bump = options?.bumpUpdatedAt !== false;
   const list = listHistory().filter((s) => s.id !== session.id);
-  list.unshift({ ...session, updatedAt: Date.now() });
+  list.unshift({
+    ...session,
+    updatedAt: bump ? Date.now() : session.updatedAt,
+  });
+  // Keep newest-first even when preserving timestamps from migration.
+  list.sort((a, b) => b.updatedAt - a.updatedAt);
   try {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, MAX_HISTORY)));
   } catch {
