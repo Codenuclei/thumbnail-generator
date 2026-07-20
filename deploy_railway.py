@@ -192,6 +192,9 @@ def main() -> None:
         if env.get(optional):
             set_env_var(mgmt_key, optional, env[optional])
     set_env_var(mgmt_key, "COOKIE_SECURE", "1")
+    public_url = f"https://{tenant_id}.cohesivity.app" if tenant_id else "https://fleet-dolphin-gaining.cohesivity.app"
+    set_env_var(mgmt_key, "PUBLIC_APP_URL", public_url)
+    set_env_var(mgmt_key, "NEXT_PUBLIC_APP_URL", public_url)
     set_env_var(mgmt_key, "YTDLP_PATH", "/usr/local/bin/yt-dlp")
     set_env_var(mgmt_key, "FFMPEG_PATH", "/usr/bin/ffmpeg")
     set_env_var(mgmt_key, "YT_FRAME_PIPELINE", "/opt/yt-worker/frame_pipeline.py")

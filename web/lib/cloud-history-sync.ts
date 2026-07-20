@@ -9,6 +9,7 @@ import {
 } from "@/lib/studio-history";
 import { readJsonResponse } from "@/lib/safe-json";
 import { compressDataUrl } from "@/lib/image-compress-client";
+import { publicShareUrl } from "@/lib/share-slug";
 
 const MIGRATION_FLAG = "thumbnail-studio-cloud-sync-v1";
 
@@ -113,16 +114,18 @@ async function pushSessionToCloud(
       payload,
       sessionId: session.id,
       preferredSlug: session.shareSlug,
+      origin:
+        typeof window !== "undefined" ? window.location.origin : undefined,
     }),
   });
   const data = await readJsonResponse<{ error?: string; slug?: string; url?: string }>(
     res
   );
-  if (!res.ok || !data.slug || !data.url) {
+  if (!res.ok || !data.slug) {
     console.warn("[cloud-sync] push failed", session.id, data.error);
     return null;
   }
-  return { slug: data.slug, url: data.url };
+  return { slug: data.slug, url: publicShareUrl(data.slug) };
 }
 
 /**

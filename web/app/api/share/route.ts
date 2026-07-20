@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createShareRecord } from "@/lib/share-store";
 import { publicSharePath } from "@/lib/share-slug";
+import { resolvePublicAppOrigin } from "@/lib/public-app-url";
 import type { SharePayload } from "@/lib/studio-history";
 
 export const runtime = "nodejs";
@@ -29,7 +30,13 @@ export async function POST(req: NextRequest) {
       preferredSlug,
     });
 
-    const origin = req.nextUrl.origin;
+    const origin = resolvePublicAppOrigin({
+      requestOrigin: req.nextUrl.origin,
+      forwardedHost: req.headers.get("x-forwarded-host"),
+      forwardedProto: req.headers.get("x-forwarded-proto"),
+      clientOrigin:
+        typeof body.origin === "string" ? body.origin : req.headers.get("origin"),
+    });
     const path = publicSharePath(created.slug);
 
     return NextResponse.json({

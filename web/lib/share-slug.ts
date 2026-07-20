@@ -1,3 +1,5 @@
+import { resolveClientPublicOrigin } from "@/lib/public-app-url";
+
 /** Title-friendly unique share slug helpers (client + server safe). */
 
 const ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -41,8 +43,6 @@ export function publicSharePath(slug: string): string {
 }
 
 export function publicShareUrl(slug: string, origin?: string): string {
-  const base =
-    origin ||
-    (typeof window !== "undefined" ? window.location.origin : "");
-  return `${base}${publicSharePath(slug)}`;
+  const base = origin || resolveClientPublicOrigin();
+  return `${base.replace(/\/+$/, "")}${publicSharePath(slug)}`;
 }

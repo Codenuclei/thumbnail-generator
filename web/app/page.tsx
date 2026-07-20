@@ -69,6 +69,7 @@ import {
   type StudioSession,
 } from "@/lib/studio-history";
 import { takeShareHandoff } from "@/lib/share-handoff";
+import { publicShareUrl } from "@/lib/share-slug";
 import {
   rememberSharedSession,
   syncLocalHistoryToCloud,
@@ -999,6 +1000,8 @@ export default function Home() {
         payload,
         sessionId: session.id,
         preferredSlug: options?.preferredSlug || session.shareSlug,
+        origin:
+          typeof window !== "undefined" ? window.location.origin : undefined,
       }),
     });
     const data = await readJsonResponse<{
@@ -1006,10 +1009,11 @@ export default function Home() {
       slug?: string;
       url?: string;
     }>(res);
-    if (!res.ok || !data.slug || !data.url) {
+    if (!res.ok || !data.slug) {
       throw new Error(data.error || "Could not create short share link");
     }
-    return { slug: data.slug, url: data.url };
+    // Always mint the clipboard URL from the public host — never 0.0.0.0 binds.
+    return { slug: data.slug, url: publicShareUrl(data.slug) };
   }
 
   function applySharePayload(payload: SharePayload) {
