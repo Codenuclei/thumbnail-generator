@@ -12,11 +12,19 @@ import { compressDataUrl } from "@/lib/image-compress-client";
 import { publicShareUrl } from "@/lib/share-slug";
 
 const MIGRATION_FLAG = "thumbnail-studio-cloud-sync-v1";
+/** One-time re-upload so hashed Cohesivity storage paths replace broken unhashed ones. */
+const REPAIR_FLAG = "thumbnail-studio-share-repair-v2";
 
 export function localSessionsNeedingCloudPush(): StudioSession[] {
   return listHistory().filter(
     (session) => Boolean(session.topic?.trim()) && !session.shareSlug
   );
+}
+
+function sessionsForCloudSync(forceRepair: boolean): StudioSession[] {
+  const all = listHistory().filter((session) => Boolean(session.topic?.trim()));
+  if (forceRepair) return all;
+  return all.filter((session) => !session.shareSlug);
 }
 
 /** Promote an unsaved local draft into history so it can be cloud-synced too. */
@@ -147,13 +155,15 @@ export async function syncLocalHistoryToCloud(options?: {
     promoteDraftToHistory(options.draft);
   }
 
-  const pending = localSessionsNeedingCloudPush().slice(
+  const forceRepair = !localStorage.getItem(REPAIR_FLAG);
+  const pending = sessionsForCloudSync(forceRepair).slice(
     0,
     options?.maxSessions ?? 40
   );
   if (!pending.length) {
     try {
       localStorage.setItem(MIGRATION_FLAG, new Date().toISOString());
+      localStorage.setItem(REPAIR_FLAG, new Date().toISOString());
     } catch {
       // ignore
     }
@@ -190,6 +200,7 @@ export async function syncLocalHistoryToCloud(options?: {
 
   try {
     localStorage.setItem(MIGRATION_FLAG, new Date().toISOString());
+    localStorage.setItem(REPAIR_FLAG, new Date().toISOString());
   } catch {
     // ignore
   }

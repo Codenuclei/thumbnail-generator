@@ -8,7 +8,9 @@ export type StorageUploadResult = {
   ok: boolean;
   path: string;
   url: string;
-  requestedPath: string;
+  requestedPath?: string;
+  requested_path?: string;
+  path_was_mutated?: boolean;
 };
 
 function getAppKey(): string {

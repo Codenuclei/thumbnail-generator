@@ -23,6 +23,14 @@ export async function GET(_req: Request, { params }: Params) {
   } catch (err) {
     const message = err instanceof Error ? err.message : "Share lookup failed";
     console.error("[share/get]", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    const missing = /missing|404/i.test(message);
+    return NextResponse.json(
+      {
+        error: missing
+          ? "Share file is missing from storage. Ask the creator to hit Share again."
+          : message,
+      },
+      { status: missing ? 404 : 500 }
+    );
   }
 }
