@@ -39,6 +39,8 @@ export type StudioSession = {
   editorDocument?: EditorDocument | null;
   brandLanguage?: BrandLanguage | null;
   channelProfile?: ChannelProfile | null;
+  /** Short Cohesivity-backed share slug, e.g. how-its-made-k7m2xp */
+  shareSlug?: string;
 };
 
 const HISTORY_KEY = "thumbnail-studio-history";
@@ -200,6 +202,23 @@ export function compactVideoIntelligence(
           transcript: result.youtube.transcript.slice(0, 4_000),
         }
       : undefined,
+  };
+}
+
+/** Trim heavy fields so share JSON stays small in object storage. */
+export function compactSharePayload(payload: SharePayload): SharePayload {
+  return {
+    ...payload,
+    mediaScript: payload.mediaScript?.slice(0, 4_000),
+    mediaPhotos: (payload.mediaPhotos || []).slice(0, 2).map((photo) => ({
+      ...photo,
+      data: photo.data && photo.data.length > 120_000 ? "" : photo.data,
+    })),
+    mediaIntelligence: compactVideoIntelligence(payload.mediaIntelligence || null),
+    masterPrompt: (payload.masterPrompt || "").slice(0, 2_000),
+    iterations: payload.iterations.slice(-3),
+    generatedVariants: payload.generatedVariants.slice(0, 4),
+    titleSuggestions: payload.titleSuggestions.slice(0, 8),
   };
 }
 

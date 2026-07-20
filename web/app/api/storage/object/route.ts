@@ -22,7 +22,8 @@ export async function GET(req: Request) {
       (path.startsWith("source-videos/") ||
         path.startsWith("youtube-stills/") ||
         path.startsWith("video-frames/") ||
-        path.startsWith("exports/"));
+        path.startsWith("exports/") ||
+        path.startsWith("shares/"));
     if (!allowedPrefix) {
       return NextResponse.json({ error: "Invalid path" }, { status: 400 });
     }

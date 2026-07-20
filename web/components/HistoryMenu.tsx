@@ -8,8 +8,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { History, Share2, Trash2, Clock } from "lucide-react";
+import { History, Link2, Share2, Trash2, Clock } from "lucide-react";
 import type { StudioSession } from "@/lib/studio-history";
+import { publicShareUrl } from "@/lib/share-slug";
 import { toast } from "sonner";
 
 type Props = {
@@ -17,10 +18,18 @@ type Props = {
   onLoad: (session: StudioSession) => void;
   onDelete: (id: string) => void;
   onShare: () => Promise<void>;
+  onShareSession: (session: StudioSession) => Promise<void>;
   onSave: () => void;
 };
 
-export function HistoryMenu({ history, onLoad, onDelete, onShare, onSave }: Props) {
+export function HistoryMenu({
+  history,
+  onLoad,
+  onDelete,
+  onShare,
+  onShareSession,
+  onSave,
+}: Props) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -80,8 +89,9 @@ export function HistoryMenu({ history, onLoad, onDelete, onShare, onSave }: Prop
                     </p>
                     <p className="mt-1 type-caption text-[#727578]">
                       {new Date(session.updatedAt).toLocaleString()}
+                      {session.shareSlug ? ` · /s/${session.shareSlug}` : ""}
                     </p>
-                    <div className="mt-2 flex gap-2">
+                    <div className="mt-2 flex flex-wrap gap-2">
                       <Button
                         type="button"
                         size="sm"
@@ -93,6 +103,26 @@ export function HistoryMenu({ history, onLoad, onDelete, onShare, onSave }: Prop
                         }}
                       >
                         Load
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          void (async () => {
+                            if (session.shareSlug) {
+                              await navigator.clipboard.writeText(
+                                publicShareUrl(session.shareSlug)
+                              );
+                              toast.success(`Copied /s/${session.shareSlug}`);
+                              return;
+                            }
+                            await onShareSession(session);
+                          })();
+                        }}
+                      >
+                        <Link2 className="size-3.5" />
+                        {session.shareSlug ? "Copy link" : "Make link"}
                       </Button>
                       <Button
                         type="button"

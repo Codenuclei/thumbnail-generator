@@ -56,17 +56,19 @@ import type {
 import { intelligenceForGeneration } from "@/lib/video-intelligence-types";
 import {
   buildSharePayload,
+  compactSharePayload,
   compactVideoIntelligence,
   decodeShareUrl,
   deleteHistorySession,
-  encodeShareUrl,
   listHistory,
   parseShareTokenFromLocation,
   saveHistorySession,
   saveDraft,
   loadDraft,
+  type SharePayload,
   type StudioSession,
 } from "@/lib/studio-history";
+import { takeShareHandoff } from "@/lib/share-handoff";
 import { createEmptyDocument } from "@/lib/editor-types";
 import { createEditorHistory, type EditorHistory } from "@/lib/editor-history";
 import {
@@ -162,6 +164,7 @@ export default function Home() {
     "diagonal",
   ]);
   const [sessionId, setSessionId] = useState(() => `sess-${Date.now()}`);
+  const [shareSlug, setShareSlug] = useState<string | null>(null);
   const [historyList, setHistoryList] = useState<StudioSession[]>([]);
   const [mediaYoutubeUrl, setMediaYoutubeUrl] = useState("");
   const [mediaScript, setMediaScript] = useState("");
@@ -781,7 +784,9 @@ export default function Home() {
       setChannelProfileInput(savedProfile.channelInput);
     }
     const draft = loadDraft();
-    if (draft && !parseShareTokenFromLocation()) {
+    const handoff = takeShareHandoff();
+    const legacyToken = parseShareTokenFromLocation();
+    if (draft && !handoff && !legacyToken) {
       setTopic(draft.topic);
       setChannels(draft.channels);
       setHook(draft.hook);
@@ -804,37 +809,16 @@ export default function Home() {
         setChannelProfileInput(draft.channelProfile.channelInput);
       }
     }
-    const token = parseShareTokenFromLocation();
-    if (!token) return;
-    void decodeShareUrl(token).then((payload) => {
+    if (handoff) {
+      applySharePayload(handoff.payload);
+      if (handoff.slug) setShareSlug(handoff.slug);
+      toast.success("Shared session loaded");
+      return;
+    }
+    if (!legacyToken) return;
+    void decodeShareUrl(legacyToken).then((payload) => {
       if (!payload) return;
-      setTopic(payload.topic);
-      setChannels(payload.channels);
-      setHook(payload.hook);
-      setComposition(payload.composition);
-      setModel(payload.model);
-      setImageSize(payload.imageSize);
-      setMasterPrompt(payload.masterPrompt);
-      setCompositionFactors(payload.compositionFactors);
-      setUseOpeningFrames(payload.useOpeningFrames);
-      setImage(payload.image);
-      setBackend(payload.backend);
-      setIterations(payload.iterations);
-      setGeneratedVariants(payload.generatedVariants);
-      setTitleSuggestions(payload.titleSuggestions);
-      setMediaYoutubeUrl(payload.mediaYoutubeUrl || "");
-      setMediaScript(payload.mediaScript || "");
-      setMediaPhotos(payload.mediaPhotos || []);
-      setMediaIntelligence(payload.mediaIntelligence || null);
-      if (payload.editorDocument) {
-        setEditorHistory(createEditorHistory(payload.editorDocument));
-      }
-      if (payload.brandLanguage) setBrandLanguage(payload.brandLanguage);
-      if (payload.channelProfile) {
-        setChannelProfile(payload.channelProfile);
-        setChannelProfileInput(payload.channelProfile.channelInput);
-      }
-      if (payload.image) setCanvasTab("preview");
+      applySharePayload(payload);
       toast.success("Shared session loaded");
       window.history.replaceState({}, "", window.location.pathname);
     });
@@ -965,17 +949,101 @@ export default function Home() {
       editorDocument: editorHistory.present,
       brandLanguage,
       channelProfile,
+      shareSlug: shareSlug || undefined,
     };
   }
 
+  async function publishShortShare(
+    session: StudioSession,
+    options?: { preferredSlug?: string }
+  ): Promise<{ slug: string; url: string }> {
+    const payload = compactSharePayload(buildSharePayload(session));
+    if (payload.image) {
+      const c = await compressDataUrl(payload.image, { maxWidth: 960, quality: 0.75 });
+      payload.image = c.previewUrl;
+    }
+    payload.iterations = await Promise.all(
+      payload.iterations.map(async (it) => {
+        const c = await compressDataUrl(it.image, { maxWidth: 640, quality: 0.72 });
+        return { ...it, image: c.previewUrl };
+      })
+    );
+    payload.generatedVariants = await Promise.all(
+      payload.generatedVariants.map(async (v) => {
+        const c = await compressDataUrl(v.image, { maxWidth: 640, quality: 0.72 });
+        return { ...v, image: c.previewUrl };
+      })
+    );
+
+    const res = await fetch("/api/share", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        payload,
+        sessionId: session.id,
+        preferredSlug: options?.preferredSlug || session.shareSlug,
+      }),
+    });
+    const data = await readJsonResponse<{
+      error?: string;
+      slug?: string;
+      url?: string;
+    }>(res);
+    if (!res.ok || !data.slug || !data.url) {
+      throw new Error(data.error || "Could not create short share link");
+    }
+    return { slug: data.slug, url: data.url };
+  }
+
+  function applySharePayload(payload: SharePayload) {
+    setTopic(payload.topic);
+    setChannels(payload.channels);
+    setHook(payload.hook);
+    setComposition(payload.composition);
+    setModel(payload.model);
+    setImageSize(payload.imageSize);
+    setMasterPrompt(payload.masterPrompt);
+    setCompositionFactors(payload.compositionFactors);
+    setUseOpeningFrames(payload.useOpeningFrames);
+    setImage(payload.image);
+    setBackend(payload.backend);
+    setIterations(payload.iterations);
+    setGeneratedVariants(payload.generatedVariants);
+    setTitleSuggestions(payload.titleSuggestions);
+    setMediaYoutubeUrl(payload.mediaYoutubeUrl || "");
+    setMediaScript(payload.mediaScript || "");
+    setMediaPhotos(payload.mediaPhotos || []);
+    setMediaIntelligence(payload.mediaIntelligence || null);
+    if (payload.editorDocument) {
+      setEditorHistory(createEditorHistory(payload.editorDocument));
+    }
+    if (payload.brandLanguage) setBrandLanguage(payload.brandLanguage);
+    if (payload.channelProfile) {
+      setChannelProfile(payload.channelProfile);
+      setChannelProfileInput(payload.channelProfile.channelInput);
+    }
+    if (payload.image) setCanvasTab("preview");
+  }
+
   async function persistSession() {
-    const session = await buildCurrentSession();
+    let session = await buildCurrentSession();
+    try {
+      const published = await publishShortShare(session, {
+        preferredSlug: shareSlug || undefined,
+      });
+      setShareSlug(published.slug);
+      session = { ...session, shareSlug: published.slug };
+    } catch (err) {
+      console.warn("Short share publish skipped", err);
+    }
     saveHistorySession(session);
     setHistoryList(listHistory());
+    return session;
   }
 
   function loadFromSession(session: StudioSession) {
     setSessionId(session.id);
+    setShareSlug(session.shareSlug || null);
     setTopic(session.topic);
     setChannels(session.channels);
     setHook(session.hook);
@@ -1009,26 +1077,30 @@ export default function Home() {
 
   async function handleShareLink() {
     try {
-      const payload = buildSharePayload(await buildCurrentSession());
-      if (payload.image) {
-        const c = await compressDataUrl(payload.image, { maxWidth: 960, quality: 0.75 });
-        payload.image = c.previewUrl;
-      }
-      payload.iterations = await Promise.all(
-        payload.iterations.map(async (it) => {
-          const c = await compressDataUrl(it.image, { maxWidth: 640, quality: 0.72 });
-          return { ...it, image: c.previewUrl };
-        })
-      );
-      payload.generatedVariants = await Promise.all(
-        payload.generatedVariants.map(async (v) => {
-          const c = await compressDataUrl(v.image, { maxWidth: 640, quality: 0.72 });
-          return { ...v, image: c.previewUrl };
-        })
-      );
-      const url = await encodeShareUrl(payload);
-      await navigator.clipboard.writeText(url);
-      toast.success("Share link copied — paste to restore this session");
+      const session = await buildCurrentSession();
+      const published = await publishShortShare(session, {
+        preferredSlug: shareSlug || session.shareSlug,
+      });
+      setShareSlug(published.slug);
+      saveHistorySession({ ...session, shareSlug: published.slug });
+      setHistoryList(listHistory());
+      await navigator.clipboard.writeText(published.url);
+      toast.success(`Short link copied: /s/${published.slug}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Share failed");
+    }
+  }
+
+  async function handleShareSavedSession(session: StudioSession) {
+    try {
+      const published = await publishShortShare(session, {
+        preferredSlug: session.shareSlug,
+      });
+      saveHistorySession({ ...session, shareSlug: published.slug });
+      setHistoryList(listHistory());
+      if (session.id === sessionId) setShareSlug(published.slug);
+      await navigator.clipboard.writeText(published.url);
+      toast.success(`Short link copied: /s/${published.slug}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Share failed");
     }
@@ -1814,7 +1886,16 @@ export default function Home() {
                 setHistoryList(listHistory());
               }}
               onShare={handleShareLink}
-              onSave={() => void persistSession().then(() => toast.success("Session saved"))}
+              onShareSession={handleShareSavedSession}
+              onSave={() =>
+                void persistSession().then((session) =>
+                  toast.success(
+                    session.shareSlug
+                      ? `Saved · /s/${session.shareSlug}`
+                      : "Session saved"
+                  )
+                )
+              }
             />
             {geminiStatus === "connected" ? (
               <span className="inline-flex items-center gap-1.5 rounded-[100px] border border-[#efefef] bg-[#defafe] px-3 py-1 type-caption font-medium text-[#004d60]">
