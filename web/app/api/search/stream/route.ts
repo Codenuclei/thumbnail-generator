@@ -9,6 +9,8 @@ export async function POST(req: NextRequest) {
   const title = String(body.title || body.topic || "").trim();
   const channels = body.channels ? String(body.channels) : undefined;
   const hook = body.hook ? String(body.hook).trim() : undefined;
+  const filterMode =
+    body.filterMode === "strict" || body.lightFilter === false ? "strict" : "light";
 
   if (!title) {
     return new Response(JSON.stringify({ type: "error", message: "Title is required" }), {
@@ -27,6 +29,7 @@ export async function POST(req: NextRequest) {
         await runSearchPipeline(title, {
           channels,
           hook,
+          filterMode,
           onProgress: (event) => send(event),
         });
       } catch (err) {

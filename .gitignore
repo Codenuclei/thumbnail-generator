@@ -27,6 +27,10 @@ web/dist/
 *.log
 *.tsbuildinfo
 
+# Agent skills (installed locally, never committed)
+.agents/
+skills-lock.json
+
 # OS / editor
 .DS_Store
 Thumbs.db

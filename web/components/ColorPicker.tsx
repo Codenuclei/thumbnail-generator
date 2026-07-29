@@ -331,7 +331,7 @@ export function ColorPicker({
             role="dialog"
             aria-modal="false"
             aria-label={label ? `${label} color wheel` : "Color wheel"}
-            className="fixed z-[9999] w-[260px] rounded-[16px] border border-[#efefef] bg-white p-3 shadow-[0_16px_48px_rgba(23,22,24,0.22)]"
+            className="fixed z-[var(--z-floating)] w-[260px] rounded-[20px] border border-[#efefef] bg-white p-3 shadow-[0_16px_48px_rgba(23,22,24,0.22)]"
             style={{ left: pos.left, top: pos.top }}
           >
             <div className="mb-2 flex items-center gap-1.5">
@@ -342,7 +342,7 @@ export function ColorPicker({
                 onPointerUp={onDragEnd}
                 onPointerCancel={onDragEnd}
               >
-                <GripVertical className="size-3.5 shrink-0 text-[#727578]" />
+                <GripVertical className="size-3.5 shrink-0 text-[#5c5e60]" />
                 <p className="min-w-0 flex-1 truncate type-caption font-medium text-[#171618]">
                   {label || "Custom color"} · drag to move
                 </p>
@@ -350,7 +350,7 @@ export function ColorPicker({
               <button
                 type="button"
                 data-color-picker-close
-                className="shrink-0 rounded-[6px] p-1.5 text-[#727578] hover:bg-[#f7f7f7] hover:text-[#171618]"
+                className="shrink-0 rounded-[6px] p-1.5 text-[#5c5e60] hover:bg-[#f7f7f7] hover:text-[#171618]"
                 aria-label="Close color picker"
                 onPointerDown={(e) => {
                   e.stopPropagation();
@@ -389,7 +389,7 @@ export function ColorPicker({
             </div>
 
             <label className="mt-3 block space-y-1.5">
-              <span className="type-caption text-[#727578]">Hue</span>
+              <span className="type-caption text-[#5c5e60]">Hue</span>
               <input
                 type="range"
                 min={0}
@@ -440,7 +440,7 @@ export function ColorPicker({
   return (
     <div className={cn("space-y-1.5", className)}>
       {label && !compact ? (
-        <p className="type-caption font-medium text-[#727578]">{label}</p>
+        <p className="type-caption font-medium text-[#5c5e60]">{label}</p>
       ) : null}
       <div className="flex items-center gap-2">
         <button
@@ -471,7 +471,7 @@ export function ColorPicker({
                   border: "3px solid transparent",
                 }
           }
-          title={`${label || "Color"} · ${hex.toUpperCase()} — click to customize`}
+          title={`${label || "Color"} ${hex.toUpperCase()}, click to customize`}
         >
           {!compact && (
             <span

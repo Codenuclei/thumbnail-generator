@@ -56,7 +56,7 @@ function TabsTrigger({ className, ...props }: TabsPrimitive.Tab.Props) {
     <TabsPrimitive.Tab
       data-slot="tabs-trigger"
       className={cn(
-        "relative inline-flex h-10 flex-1 items-center justify-center gap-1.5 px-4 text-[14px] font-medium tracking-[-0.01em] whitespace-nowrap text-[#727578] transition-colors outline-none hover:text-[#171618] disabled:pointer-events-none disabled:opacity-50 data-active:text-[#171618]",
+        "relative inline-flex h-10 flex-1 items-center justify-center gap-1.5 px-4 text-[14px] font-medium tracking-[-0.01em] whitespace-nowrap text-[#5c5e60] transition-colors outline-none hover:text-[#171618] disabled:pointer-events-none disabled:opacity-50 data-active:text-[#171618]",
         /* Line variant: ink underline */
         "group-data-[variant=line]/tabs-list:rounded-none group-data-[variant=line]/tabs-list:bg-transparent after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:bg-[#171618] after:opacity-0 after:transition-opacity group-data-[variant=line]/tabs-list:data-active:after:opacity-100",
         /* Pill variant */
@@ -72,7 +72,11 @@ function TabsContent({ className, ...props }: TabsPrimitive.Panel.Props) {
   return (
     <TabsPrimitive.Panel
       data-slot="tabs-content"
-      className={cn("flex-1 outline-none", className)}
+      className={cn(
+        "flex-1 outline-none",
+        "animate-in fade-in-0 slide-in-from-bottom-1 duration-[var(--duration-panel)] ease-[var(--ease-out)]",
+        className
+      )}
       {...props}
     />
   )

@@ -94,6 +94,7 @@ export function InspirationGrid({
                   size="icon-xs"
                   className="absolute top-1 right-1 size-6 bg-white/90 shadow-sm hover:bg-white"
                   title="Expand thumbnail"
+                  aria-label="Expand thumbnail"
                   onClick={(e) => {
                     e.stopPropagation();
                     setExpanded(item);
@@ -106,21 +107,21 @@ export function InspirationGrid({
               <div className="mt-1.5 min-w-0 flex-1">
                 <p className="truncate type-caption font-medium text-[#171618]">{item.channel}</p>
                 <p
-                  className="mt-0.5 line-clamp-2 type-caption text-[#727578]"
+                  className="mt-0.5 line-clamp-2 type-caption text-[#5c5e60]"
                   title={item.title}
                 >
                   {item.title}
                 </p>
-                <p className="mt-0.5 type-caption text-[#727578]">{formatViews(item.viewCount)}</p>
+                <p className="mt-0.5 type-caption text-[#5c5e60]">{formatViews(item.viewCount)}</p>
               </div>
 
               {hasComment && (isLiked || isDisliked) && (
                 <button
                   type="button"
                   onClick={() => onEditFeedback(item)}
-                  className="mt-1.5 flex items-start gap-1 rounded-[6px] bg-[#f7f7f7] px-1.5 py-1 text-left type-caption text-[#727578] hover:bg-[#efefef]"
+                  className="mt-1.5 flex items-start gap-1 rounded-[6px] bg-[#f7f7f7] px-1.5 py-1 text-left type-caption text-[#5c5e60] hover:bg-[#efefef]"
                 >
-                  <MessageSquareText className="mt-0.5 size-3 shrink-0 text-[#727578]" />
+                  <MessageSquareText className="mt-0.5 size-3 shrink-0 text-[#5c5e60]" />
                   <span className="line-clamp-1">{fb.comment}</span>
                 </button>
               )}

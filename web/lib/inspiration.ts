@@ -9,6 +9,10 @@ export type InspirationVideo = {
   description?: string;
 };
 
+export type RejectedInspirationVideo = InspirationVideo & {
+  rejectReason?: string;
+};
+
 export type { VideoContentMapping } from "@/lib/video-mapping";
 
 export type ThumbnailFeedback = {

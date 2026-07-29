@@ -2,13 +2,10 @@
 
 import { useState, type ReactNode } from "react";
 import {
-  BrainCircuit,
   Captions,
   ImagePlus,
   Link2,
-  Loader2,
-  Palette,
-  Sparkles,
+  LoaderCircle,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -109,7 +106,7 @@ export function MediaIntelligencePanel({
       );
       toast.success(
         data.source === "description"
-          ? "No captions — filled script from video description"
+          ? "No captions found. Filled script from video description"
           : "Transcript loaded into script"
       );
     } catch (err) {
@@ -120,36 +117,28 @@ export function MediaIntelligencePanel({
   }
 
   return (
-    <section className="space-y-3 rounded-[14px] border border-[#efefef] bg-[#f7f7f7] p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-0">
-          <h3 className="inline-flex items-center gap-1.5 type-ui text-[#171618]">
-            <BrainCircuit className="size-3.5 text-[#38296c]" />
-            Media intelligence
-          </h3>
-          <p className="type-caption text-[#727578]">
-            Photos + brief → Generate (Analyze optional)
-          </p>
-        </div>
-        {result && (
+    <section className="space-y-4">
+      {result ? (
+        <div className="flex justify-end">
           <Badge
             variant="outline"
             className={`font-normal ${confidenceClass(result.confidence.level)}`}
           >
             {result.confidence.level} · {result.confidence.score}%
           </Badge>
-        )}
-      </div>
+        </div>
+      ) : null}
 
-      <div className="grid gap-2 sm:grid-cols-2">
-        <div className="space-y-1">
+      <div className="space-y-4">
+        <div className="space-y-1.5">
           <div className="flex items-center justify-between gap-2">
             <Label
               htmlFor="media-youtube-url"
-              className="inline-flex items-center gap-1 type-caption text-[#727578]"
+              className="inline-flex items-center gap-1 type-caption font-normal text-[#5c5e60]"
             >
               <Link2 className="size-3" />
-              YouTube URL
+              YouTube URL{" "}
+              <span className="text-[var(--text-tertiary)]">optional</span>
             </Label>
             <Button
               type="button"
@@ -160,7 +149,7 @@ export function MediaIntelligencePanel({
               onClick={() => void handleFetchTranscript()}
             >
               {fetchingTranscript ? (
-                <Loader2 className="size-3 animate-spin" />
+                <LoaderCircle className="size-3 animate-spin" />
               ) : (
                 <Captions className="size-3" />
               )}
@@ -176,14 +165,18 @@ export function MediaIntelligencePanel({
               setTranscriptMeta(null);
             }}
             placeholder="https://youtube.com/watch?v=…"
-            className="h-8 bg-white"
+            className="h-9 bg-white"
           />
         </div>
 
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           <div className="flex items-center justify-between gap-2">
-            <Label htmlFor="media-photo-upload" className="type-caption text-[#727578]">
-              Photos
+            <Label
+              htmlFor="media-photo-upload"
+              className="type-caption font-normal text-[#5c5e60]"
+            >
+              Reference photos{" "}
+              <span className="text-[var(--text-tertiary)]">optional, up to 4</span>
             </Label>
             <Button
               type="button"
@@ -210,11 +203,11 @@ export function MediaIntelligencePanel({
             />
           </div>
           {photos.length ? (
-            <div className="flex gap-1.5 overflow-x-auto">
+            <div className="flex gap-2 overflow-x-auto pb-0.5">
               {photos.map((photo) => (
                 <div
                   key={photo.id}
-                  className="group relative h-12 w-16 shrink-0 overflow-hidden rounded-[6px] border border-[#efefef] bg-white"
+                  className="group relative h-14 w-[4.5rem] shrink-0 overflow-hidden rounded-[8px] border border-[#efefef] bg-[#f7f7f7]"
                 >
                   <img
                     src={photo.previewUrl}
@@ -223,7 +216,7 @@ export function MediaIntelligencePanel({
                   />
                   <button
                     type="button"
-                    className="absolute right-0.5 top-0.5 rounded-full bg-black/65 p-0.5 text-white opacity-0 transition-opacity group-hover:opacity-100"
+                    className="absolute right-0.5 top-0.5 rounded-full bg-[#171618]/75 p-0.5 text-white opacity-0 transition-opacity group-hover:opacity-100"
                     onClick={() => onRemovePhoto(photo.id)}
                     aria-label={`Remove ${photo.name}`}
                   >
@@ -233,56 +226,66 @@ export function MediaIntelligencePanel({
               ))}
             </div>
           ) : (
-            <p className="type-caption text-[#727578]">Product / person / style refs for scratch generate</p>
+            <p className="type-caption leading-snug text-[#5c5e60]">
+              One photo is enough: a face, a product, or a backdrop. Not the whole thumbnail.
+            </p>
           )}
         </div>
-      </div>
 
-      <div className="space-y-1">
-        <div className="flex items-center justify-between gap-2">
-          <Label htmlFor="media-script" className="type-caption text-[#727578]">
-            Creative brief / script
-          </Label>
-          <span className="type-caption text-[#727578]">
-            {transcriptMeta || `${script.trim().length.toLocaleString()} chars`}
-          </span>
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <Label
+              htmlFor="media-script"
+              className="type-caption font-normal text-[#5c5e60]"
+            >
+              Brief or script{" "}
+              <span className="text-[var(--text-tertiary)]">optional</span>
+            </Label>
+            <span className="type-caption tabular-nums text-[var(--text-tertiary)]">
+              {transcriptMeta || `${script.trim().length.toLocaleString()} chars`}
+            </span>
+          </div>
+          <Textarea
+            id="media-script"
+            value={script}
+            onChange={(event) => {
+              onScriptChange(event.target.value);
+              setTranscriptMeta(null);
+            }}
+            rows={3}
+            className="min-h-[72px] resize-y bg-white type-caption"
+            placeholder="Mood, subject, or story. Or paste a script."
+          />
         </div>
-        <Textarea
-          id="media-script"
-          value={script}
-          onChange={(event) => {
-            onScriptChange(event.target.value);
-            setTranscriptMeta(null);
-          }}
-          rows={3}
-          className="min-h-[72px] resize-y bg-white type-caption"
-          placeholder="Describe the thumbnail you want, or paste script/outline… Used on Generate even without Analyze. Or Fetch transcript from the URL above."
-        />
+
+        {openingFramesSlot}
+
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#efefef] pt-3">
+          <p className="type-caption text-[#5c5e60]">
+            Analyze reads media for hooks and colors. Skip if you just want to generate.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 shrink-0"
+            onClick={onAnalyze}
+            disabled={!canAnalyze || analyzing}
+          >
+            {analyzing ? (
+              <>
+                <LoaderCircle className="size-3.5 animate-spin" />
+                {analysisProgress || "Reading media…"}
+              </>
+            ) : (
+              "Analyze media"
+            )}
+          </Button>
+        </div>
       </div>
-
-      {openingFramesSlot}
-
-      <Button
-        type="button"
-        className="h-9 w-full"
-        onClick={onAnalyze}
-        disabled={!canAnalyze || analyzing}
-      >
-        {analyzing ? (
-          <>
-            <Loader2 className="size-3.5 animate-spin" />
-            {analysisProgress || "Reading media…"}
-          </>
-        ) : (
-          <>
-            <Sparkles className="size-3.5" />
-            Analyze media
-          </>
-        )}
-      </Button>
 
       {result && (
-        <div className="space-y-2.5 border-t border-[#efefef] pt-2.5">
+        <div className="space-y-3 border-t border-[#efefef] pt-3">
           <div>
             <div className="flex flex-wrap items-center gap-1.5">
               <p className="type-ui text-[#171618]">{result.recommendedTopic}</p>
@@ -290,31 +293,28 @@ export function MediaIntelligencePanel({
                 {result.sourceSummary}
               </Badge>
             </div>
-            <p className="mt-0.5 type-caption leading-snug text-[#727578]">{result.summary}</p>
+            <p className="mt-0.5 type-caption leading-snug text-[#5c5e60]">{result.summary}</p>
           </div>
 
-          <div className="grid gap-1.5 sm:grid-cols-3">
+          <div className="grid gap-x-4 gap-y-2 sm:grid-cols-3">
             {[
               ["Foreground", result.depth.foreground],
               ["Midground", result.depth.midground],
               ["Background", result.depth.background],
             ].map(([label, value]) => (
-              <div key={label} className="rounded-[8px] border border-[#efefef] bg-white px-2 py-1.5">
-                <p className="type-caption text-[#727578]">{label}</p>
+              <div key={label} className="min-w-0">
+                <p className="type-caption text-[#5c5e60]">{label}</p>
                 <p className="mt-0.5 type-caption text-[#171618] line-clamp-2">{value}</p>
               </div>
             ))}
           </div>
 
-          <div className="space-y-1">
-            <div className="flex items-center gap-1.5">
-              <Palette className="size-3 text-[#38296c]" />
-              <p className="type-caption font-medium text-[#171618]">
-                {result.colors.source === "measured"
-                  ? "Colors from media"
-                  : "Fallback colors"}
-              </p>
-            </div>
+          <div className="space-y-1.5">
+            <p className="type-caption font-medium text-[#171618]">
+              {result.colors.source === "measured"
+                ? "Colors from media"
+                : "Suggested colors"}
+            </p>
             <div className="flex flex-wrap items-center gap-1.5">
               {result.colors.dominant.map((color) => (
                 <span
@@ -324,7 +324,7 @@ export function MediaIntelligencePanel({
                   title={color}
                 />
               ))}
-              <span className="type-caption text-[#727578]">
+              <span className="type-caption text-[#5c5e60]">
                 text {result.colors.text} · bg {result.colors.background}
               </span>
             </div>
@@ -332,26 +332,22 @@ export function MediaIntelligencePanel({
 
           <div className="space-y-1.5">
             <p className="type-caption font-medium text-[#171618]">Thumbnail hooks</p>
-            <div className="grid gap-1.5 sm:grid-cols-2">
+            <div className="flex flex-wrap gap-1.5">
               {result.hooks.map((candidate) => {
                 const active = selectedHook.trim().toUpperCase() === candidate.text;
                 return (
                   <button
                     key={candidate.text}
                     type="button"
+                    title={candidate.rationale}
                     onClick={() => onSelectHook(candidate.text)}
-                    className={`rounded-[8px] border px-2.5 py-2 text-left transition-colors ${
+                    className={`rounded-[9999px] border px-3 py-1.5 type-caption transition-colors ${
                       active
-                        ? "border-[#171618] bg-white ring-1 ring-[#171618]"
-                        : "border-[#efefef] bg-white hover:border-[#727578]"
+                        ? "border-[#171618] bg-[#171618] text-white"
+                        : "border-[#efefef] bg-white text-[#5c5e60] hover:border-[#727578] hover:text-[#171618]"
                     }`}
                   >
-                    <span className="block type-caption font-medium text-[#171618]">
-                      {candidate.text}
-                    </span>
-                    <span className="mt-0.5 block type-caption text-[#727578] line-clamp-2">
-                      {candidate.rationale}
-                    </span>
+                    {candidate.text}
                   </button>
                 );
               })}
@@ -359,11 +355,9 @@ export function MediaIntelligencePanel({
           </div>
 
           {result.confidence.limitations.length > 0 && (
-            <div className="rounded-[8px] border border-[#f0dfac] bg-[#fff9e8] px-2.5 py-2">
-              <p className="type-caption text-[#8b6b12]">
-                {result.confidence.limitations.join(" · ")}
-              </p>
-            </div>
+            <p className="type-caption text-[#8b6b12]">
+              {result.confidence.limitations.join(" · ")}
+            </p>
           )}
         </div>
       )}

@@ -33,16 +33,17 @@ export async function pickBestOpeningFrame(
     .map((c, i) => `Frame ${i + 1} = ${c.timestampSec}s (image ${i + 1} below)`)
     .join("\n");
 
-  const prompt = `Pick the best still for a YouTube thumbnail from these candidate frames.
+  const prompt = `Pick the best YouTube thumbnail KEY MOMENT from these candidate frames sampled across the video.
 
 ${options?.topic ? `Video topic: "${options.topic}"` : ""}
 ${options?.clipName ? `Clip / source: "${options.clipName}"` : ""}
 
 ${catalog}
 
-These may be full-video samples OR YouTube's public timeline stills (0/1/2/3) and posters — pick the strongest thumbnail regardless.
-Prefer: hero subject fully visible, sharp focus, good lighting, readable action, iconic product/factory/process moment, emotion or payoff.
+Prefer iconic payoff / reaction / product-reveal / conflict / before-after clarity — anywhere in the runtime, not limited to the opening 1–2 seconds.
+Prefer: hero subject fully visible, sharp focus, good lighting, readable action, emotion or clear object silhouette.
 Avoid: black frames, title cards, end screens, logos-only, heavy motion blur, empty B-roll, watermark-only frames, letterbox bars, ugly UI chrome.
+Do NOT bias toward the earliest timestamp unless it is clearly the strongest still.
 
 Return ONLY JSON: {"selectedIndex": <0-based>, "reason": "<short sentence including why this moment beats others>"}`;
 
@@ -87,10 +88,14 @@ Return ONLY JSON: {"selectedIndex": <0-based>, "reason": "<short sentence includ
 }
 
 function heuristicPick(candidates: FrameCandidate[]): FramePickResult {
-  const idx = Math.min(2, candidates.length - 1);
+  // Prefer a mid-pack sample so we don't always lock to the cold open.
+  const idx = Math.min(
+    Math.max(1, Math.floor(candidates.length / 2)),
+    candidates.length - 1
+  );
   return {
     selectedIndex: idx,
-    reason: "Heuristic pick — prefer early clear frame",
+    reason: "Heuristic pick — mid-runtime key moment candidate",
     source: "heuristic",
   };
 }

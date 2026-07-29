@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import type { PipelineOverview } from "@/lib/pipeline-overview";
 import type { VideoContentMapping } from "@/lib/video-mapping";
 import { formatViews } from "@/lib/inspiration";
@@ -20,6 +20,7 @@ import {
   Link2,
   Maximize2,
   Minimize2,
+  Sparkles,
   X,
 } from "lucide-react";
 
@@ -76,6 +77,8 @@ type Props = {
   onSelectLayer: (id: string | null) => void;
   generatedVariants?: GeneratedVariant[];
   onPickVariant?: (variant: GeneratedVariant) => void;
+  onGenerateSimilar?: (variant: GeneratedVariant) => void;
+  generatingSimilarId?: string | null;
   paletteColors?: string[];
   paletteName?: string;
 };
@@ -131,6 +134,8 @@ export function GenerationCanvas({
   onSelectLayer,
   generatedVariants = [],
   onPickVariant,
+  onGenerateSimilar,
+  generatingSimilarId = null,
   paletteColors = [],
   paletteName,
 }: Props) {
@@ -152,48 +157,68 @@ export function GenerationCanvas({
   const variantCard = (v: GeneratedVariant) => {
     const active = image === v.image;
     const title = v.suggestedTitle || v.label;
+    const similarBusy = generatingSimilarId === v.id;
     return (
-      <button
+      <div
         key={v.id}
-        type="button"
-        onClick={() => onPickVariant?.(v)}
         className={`flex flex-col overflow-hidden rounded-[20px] border text-left transition-colors ${
           active
             ? "border-[#171618] ring-1 ring-[#171618]"
             : "border-[#efefef] hover:border-[#727578]"
         }`}
       >
-        <img
-          src={v.image}
-          alt={title}
-          className="aspect-video w-full object-cover"
-        />
-        <div className="space-y-2 bg-[#f7f7f7] p-2.5">
-          <p className="line-clamp-2 type-ui text-[#171618]">{title}</p>
-          <div className="flex flex-wrap gap-1">
-            {v.cameraFilterLabel && (
-              <Badge variant="outline" className="type-caption font-normal">
-                {v.cameraFilterLabel}
-              </Badge>
-            )}
-            {v.compositionFactorLabel && (
-              <Badge variant="secondary" className="type-caption font-normal">
-                {v.compositionFactorLabel}
-              </Badge>
-            )}
-            {v.compositionLabel && (
-              <Badge variant="outline" className="type-caption font-normal text-[#727578]">
-                {v.compositionLabel}
-              </Badge>
-            )}
-            {v.paletteName && (
-              <Badge variant="outline" className="type-caption font-normal text-[#38296c]">
-                {v.paletteName}
-              </Badge>
-            )}
+        <button
+          type="button"
+          onClick={() => onPickVariant?.(v)}
+          className="flex flex-col text-left"
+        >
+          <img
+            src={v.image}
+            alt={title}
+            className="aspect-video w-full object-cover"
+          />
+          <div className="space-y-2 bg-[#f7f7f7] p-2.5">
+            <p className="line-clamp-2 type-ui text-[#171618]">{title}</p>
+            <div className="flex flex-wrap gap-1">
+              {v.cameraFilterLabel && (
+                <Badge variant="outline" className="type-caption font-normal">
+                  {v.cameraFilterLabel}
+                </Badge>
+              )}
+              {v.compositionFactorLabel && (
+                <Badge variant="secondary" className="type-caption font-normal">
+                  {v.compositionFactorLabel}
+                </Badge>
+              )}
+              {v.compositionLabel && (
+                <Badge variant="outline" className="type-caption font-normal text-[#5c5e60]">
+                  {v.compositionLabel}
+                </Badge>
+              )}
+              {v.paletteName && (
+                <Badge variant="outline" className="type-caption font-normal text-[#38296c]">
+                  {v.paletteName}
+                </Badge>
+              )}
+            </div>
           </div>
-        </div>
-      </button>
+        </button>
+        {onGenerateSimilar && (
+          <div className="border-t border-[#efefef] bg-white px-2.5 py-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="w-full rounded-[var(--radius-buttons)]"
+              disabled={loading || similarBusy}
+              onClick={() => onGenerateSimilar(v)}
+            >
+              <Sparkles className={`size-3.5 ${similarBusy ? "animate-spin" : ""}`} />
+              {similarBusy ? "Generating…" : "Similar variants"}
+            </Button>
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -208,7 +233,7 @@ export function GenerationCanvas({
       <div className="flex shrink-0 items-center justify-between gap-4 border-b border-[#efefef] px-5 py-4">
         <div className="min-w-0">
           <p className="type-ui text-[#171618]">Canvas</p>
-          <p className="mt-0.5 type-caption text-[#727578]">Preview & iterate</p>
+          <p className="mt-0.5 type-caption text-[#5c5e60]">Preview & iterate</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <Button
@@ -278,7 +303,7 @@ export function GenerationCanvas({
                   <span className="truncate text-[#171618]">
                     {searchStatus || "Searching…"}
                   </span>
-                  <span className="text-[#727578]">{searchProgress}%</span>
+                  <span className="text-[#5c5e60]">{searchProgress}%</span>
                 </div>
                 <Progress value={searchProgress} className="h-1.5" />
               </div>
@@ -287,7 +312,7 @@ export function GenerationCanvas({
             {!pipeline ? (
               <div className="flex min-h-[280px] flex-col items-center justify-center rounded-[20px] border border-[#efefef] bg-[#f7f7f7] px-8 text-center">
                 <p className="type-ui text-[#171618]">Your pipeline will appear here</p>
-                <p className="mt-2 max-w-sm type-ui font-normal text-[#727578]">
+                <p className="mt-2 max-w-sm type-ui font-normal text-[#5c5e60]">
                   Research a topic to stream references, title ideas, and opening mappings.
                 </p>
               </div>
@@ -296,19 +321,19 @@ export function GenerationCanvas({
                 <Panel title="Pipeline summary">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="min-w-0">
-                      <p className="type-caption text-[#727578]">Topic</p>
+                      <p className="type-caption text-[#5c5e60]">Topic</p>
                       <p className="mt-1 type-ui text-[#171618] line-clamp-2">
                         {pipeline.topic}
                       </p>
                     </div>
                     <div>
-                      <p className="type-caption text-[#727578]">Hook</p>
+                      <p className="type-caption text-[#5c5e60]">Hook</p>
                       <p className="mt-1 type-ui text-[#171618] truncate">
-                        {pipeline.hook || "—"}
+                        {pipeline.hook || "None"}
                       </p>
                     </div>
                     <div>
-                      <p className="type-caption text-[#727578]">Selected</p>
+                      <p className="type-caption text-[#5c5e60]">Selected</p>
                       <p className="mt-1 type-ui text-[#171618]">
                         {pipeline.selectedCount} references
                       </p>
@@ -318,7 +343,7 @@ export function GenerationCanvas({
                         <ThumbsUp className="size-3.5" />
                         {pipeline.liked.length}
                       </span>
-                      <span className="inline-flex items-center gap-1.5 text-[#727578]">
+                      <span className="inline-flex items-center gap-1.5 text-[#5c5e60]">
                         <ThumbsDown className="size-3.5" />
                         {pipeline.disliked.length}
                       </span>
@@ -343,7 +368,7 @@ export function GenerationCanvas({
                   }
                 >
                   {titleSuggestions.length === 0 ? (
-                    <p className="type-ui font-normal text-[#727578]">
+                    <p className="type-ui font-normal text-[#5c5e60]">
                       Like references, then refresh titles from your feedback.
                     </p>
                   ) : (
@@ -385,7 +410,7 @@ export function GenerationCanvas({
                             />
                             <div className="min-w-0 flex-1">
                               <p className="type-ui text-[#171618] line-clamp-2">{m.title}</p>
-                              <p className="mt-1 type-caption text-[#727578]">
+                              <p className="mt-1 type-caption text-[#5c5e60]">
                                 {m.channel} · {formatViews(m.viewCount)}
                               </p>
                               <Badge variant="outline" className="mt-2">
@@ -398,7 +423,7 @@ export function GenerationCanvas({
                             </div>
                           </div>
                           {m.openingScript ? (
-                            <p className="type-ui font-normal leading-relaxed text-[#727578] line-clamp-4">
+                            <p className="type-ui font-normal leading-relaxed text-[#5c5e60] line-clamp-4">
                               {m.openingScript}
                             </p>
                           ) : null}
@@ -425,7 +450,7 @@ export function GenerationCanvas({
                             className="aspect-video w-full object-cover"
                           />
                           {r.comment && (
-                            <p className="p-2 type-caption text-[#727578] line-clamp-2">
+                            <p className="p-2 type-caption text-[#5c5e60] line-clamp-2">
                               {r.comment}
                             </p>
                           )}
@@ -437,7 +462,7 @@ export function GenerationCanvas({
 
                 <Panel title="Selected for generation">
                   {pipeline.references.filter((r) => r.selected).length === 0 ? (
-                    <p className="type-ui font-normal text-[#727578]">
+                    <p className="type-ui font-normal text-[#5c5e60]">
                       Select thumbnails from the research panel.
                     </p>
                   ) : (
@@ -479,12 +504,20 @@ export function GenerationCanvas({
           <div className="flex h-full min-h-0 flex-col gap-4 p-5">
             {generatedVariants.length > 0 ? (
               <div className="min-h-0 flex-1 space-y-3 overflow-y-auto scrollbar-none">
-                <p className="type-caption text-[#727578]">
-                  {generatedVariants.length} of 4 combinations — each uses a different camera look
-                  & framing rule
+                <p className="type-caption text-[#5c5e60]">
+                  {generatedVariants.length} of 4 combinations. Each uses a different camera look,
+                  type treatment, and framing rule
                 </p>
                 <div className="grid grid-cols-2 gap-3">
-                  {generatedVariants.map(variantCard)}
+                  {generatedVariants.map((v, i) => (
+                    <div
+                      key={v.id}
+                      className="stagger-item"
+                      style={{ "--stagger-index": i } as CSSProperties}
+                    >
+                      {variantCard(v)}
+                    </div>
+                  ))}
                   {loading &&
                     Array.from({ length: Math.max(0, 4 - generatedVariants.length) }).map(
                       (_, i) => (
@@ -508,31 +541,44 @@ export function GenerationCanvas({
             ) : (
               <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto rounded-[20px] border border-[#efefef] bg-[#f7f7f7] p-4">
                 {loading && (
-                  <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-white/80">
-                    <Skeleton className="h-8 w-8 rounded-full" />
-                    <p className="type-ui font-normal text-[#727578]">
-                      Generating 3–4 combinations…
+                  <div className="absolute inset-0 z-10 flex flex-col gap-3 bg-white/90 p-4">
+                    <p className="shrink-0 type-ui font-normal text-[#5c5e60]">
+                      Generating 3-4 combinations…
                     </p>
+                    <div className="grid min-h-0 flex-1 grid-cols-2 gap-3">
+                      {Array.from({ length: 4 }).map((_, i) => (
+                        <div
+                          key={`preview-skel-${i}`}
+                          className="overflow-hidden rounded-[20px] border border-[#efefef] bg-[#f7f7f7]"
+                        >
+                          <Skeleton className="aspect-video w-full rounded-none" />
+                          <div className="space-y-2 p-2.5">
+                            <Skeleton className="h-4 w-3/4" />
+                            <Skeleton className="h-5 w-16 rounded-full" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
                 {image ? (
                   <img
                     src={image}
                     alt="Generated thumbnail"
-                    className="max-h-full max-w-full rounded-[8px] object-contain shadow-[var(--shadow-subtle-3)]"
+                    className="reveal-unblur max-h-full max-w-full rounded-[8px] object-contain shadow-[var(--shadow-subtle-3)]"
                   />
                 ) : (
                   <div className="p-8 text-center">
                     <p className="type-ui text-[#171618]">No preview yet</p>
-                    <p className="mt-2 type-ui font-normal text-[#727578]">
-                      Like refs → suggest colors → generate combinations
+                    <p className="mt-2 type-ui font-normal text-[#5c5e60]">
+                      Like a few references, suggest colors, then generate combinations.
                     </p>
                   </div>
                 )}
               </div>
             )}
             {backend && (
-              <p className="shrink-0 truncate type-caption text-[#727578]">{backend}</p>
+              <p className="shrink-0 truncate type-caption text-[#5c5e60]">{backend}</p>
             )}
           </div>
         </TabsContent>
@@ -560,7 +606,7 @@ export function GenerationCanvas({
                 onSelectLayer={onSelectLayer}
               />
             ) : (
-              <p className="py-16 text-center type-ui font-normal text-[#727578]">
+              <p className="py-16 text-center type-ui font-normal text-[#5c5e60]">
                 Generate a thumbnail first, then edit here.
               </p>
             )}
@@ -570,7 +616,7 @@ export function GenerationCanvas({
 
       {paletteColors.length > 0 && (
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-[#efefef] px-5 py-3">
-          <span className="type-caption text-[#727578]">
+          <span className="type-caption text-[#5c5e60]">
             {paletteName || "Colors"}
           </span>
           <div className="flex gap-1.5">
@@ -594,14 +640,14 @@ export function GenerationCanvas({
         <button
           type="button"
           aria-label="Close expanded canvas"
-          className="fixed inset-0 z-[90] bg-black/30 backdrop-blur-[2px]"
+          className="fixed inset-0 z-[var(--z-scrim)] bg-black/30 backdrop-blur-[2px]"
           onClick={() => setExpanded(false)}
         />
       )}
       <div
         className={
           expanded
-            ? "fixed left-1/2 top-1/2 z-[100] flex h-[min(82vh,720px)] w-[min(920px,88vw)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[20px] border border-[#efefef] bg-white shadow-[0_24px_80px_rgba(0,0,0,0.18)]"
+            ? "fixed left-1/2 top-1/2 z-[var(--z-fullscreen)] flex h-[min(82vh,720px)] w-[min(920px,88vw)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[20px] border border-[#efefef] bg-white shadow-[0_24px_80px_rgba(0,0,0,0.18)]"
             : "h-full min-h-0"
         }
       >

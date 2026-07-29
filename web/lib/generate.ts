@@ -2,12 +2,28 @@ import { runtimeEnv } from "@/lib/runtime-env";
 
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-image";
-/** Keep under Railway/proxy patience — 4×150s was hanging users for 10+ minutes. */
-const GEMINI_TIMEOUT_MS = 55_000;
-const MAX_REF_IMAGES = 4;
-const MAX_RETRIES = 2;
-const BETWEEN_VARIANT_MS = 400;
-const RETRY_ROUND_DELAY_MS = 800;
+/**
+ * Per-call patience. Keep under route budget for multi-variant 1K batches.
+ * Timeouts used to cascade: 55s × retries × rounds × variants → proxy 504s.
+ */
+const TIMEOUT_BY_SIZE: Record<"1K" | "2K" | "4K", number> = {
+  "1K": 70_000,
+  "2K": 95_000,
+  "4K": 110_000,
+};
+const MAX_REF_IMAGES = 3;
+/** Only retry rate-limits / 5xx — never burn the budget retrying a hung call. */
+const MAX_RATE_RETRIES = 2;
+const BETWEEN_VARIANT_MS = 150;
+/**
+ * Extra whole-batch passes used to fill missing variants. Gemini image 500s are
+ * transient, so a slot that failed once usually lands on a later pass.
+ */
+const MAX_FILL_ROUNDS = 3;
+/** Known-good image model used to fill slots when the selected model keeps 500ing. */
+const FALLBACK_IMAGE_MODEL = DEFAULT_GEMINI_MODEL;
+/** Default batch size for scratch generate. */
+export const DEFAULT_VARIANT_COUNT = 4;
 
 export type GenerateResult = {
   imageBase64: string;
@@ -19,8 +35,8 @@ export type ImageAsset = {
   mimeType: string;
   data: string;
   label?: string;
-  /** When "primary", this uploaded video frame anchors the output. "reference" = style hints only. */
-  role?: "primary" | "reference";
+  /** When "primary", this uploaded video frame anchors the output. "reference" = style hints only. "seed" = generated variant direction. */
+  role?: "primary" | "reference" | "seed";
 };
 
 type InspirationInput = {
@@ -76,12 +92,18 @@ function extractImageBuffer(data: Record<string, unknown>): Buffer | null {
 
 function assetInstruction(asset: ImageAsset): string {
   if (asset.role === "primary") {
-    return `PRIMARY SOURCE — uploaded video opening frame "${asset.label || "video clip"}". This image defines the subject, scene, pose, framing, and visual anchor. Build the thumbnail FROM this frame. Preserve what is in this image; enhance for 16:9 YouTube — do NOT replace it with reference thumbnails.`;
+    return `KEY SOURCE STILL — "${asset.label || "video still"}". Use this as a plate: pull the best person, object, OR background for a YouTube thumbnail. Crop/reframe freely; do not force a full-frame paste. Keep real likeness/product identity if that element is chosen. Do not swap in a different invented person/product.`;
   }
   if (asset.role === "reference") {
-    return `REFERENCE ONLY — suggested thumbnail "${asset.label || "ref"}". Use for color mood, typography, and layout hints only. Do NOT copy its subject or override the primary video frame.`;
+    return `REFERENCE ONLY — "${asset.label || "ref"}". Study its hook FONTS (weight, case, outline thickness, placement), color mood, and layout. Do not copy its subject over the user's media. Adapt the type energy into THIS variant's distinct type treatment.`;
   }
-  return `Attached asset "${asset.label || "asset"}" — incorporate or replace elements as instructed.`;
+  if (asset.role === "seed") {
+    return `GENERATED VARIANT SEED — "${asset.label || "variant seed"}". This is a prior output the user liked. Generate a sibling in the same story direction — match palette energy, subject scale, hook placement, and venue. Vary camera look and type variant per prompt. Improve phone-readability; do not pixel-copy.`;
+  }
+  if ((asset.label || "").toLowerCase().includes("media photo")) {
+    return `USER PHOTO — "${asset.label}". Optional ingredient: use as person likeness, product/object, or background plate if it serves the topic; otherwise ignore.`;
+  }
+  return `Attached asset "${asset.label || "asset"}" — use only if it improves the thumbnail story.`;
 }
 
 function buildParts(
@@ -101,12 +123,16 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function isRetryable(msg: string): boolean {
-  return (
-    /timed out|aborted|timeout|429|500|503|INTERNAL|UNAVAILABLE|Resource exhausted|rate/i.test(
-      msg
-    )
-  );
+function isTimeoutError(msg: string): boolean {
+  return /timed out|aborted|timeout|AbortError/i.test(msg);
+}
+
+function isRateOrServerError(msg: string): boolean {
+  return /429|500|503|INTERNAL|UNAVAILABLE|Resource exhausted|rate/i.test(msg);
+}
+
+function timeoutForSize(imageSize: "1K" | "2K" | "4K"): number {
+  return TIMEOUT_BY_SIZE[imageSize] || TIMEOUT_BY_SIZE["1K"];
 }
 
 async function generateGeminiOnce(
@@ -114,7 +140,8 @@ async function generateGeminiOnce(
   prompt: string,
   model: string,
   imageSize: "1K" | "2K" | "4K" = "1K",
-  assets: ImageAsset[] = []
+  assets: ImageAsset[] = [],
+  timeoutMs?: number
 ): Promise<Buffer> {
   const res = await fetch(`${GEMINI_API_BASE}/${model}:generateContent`, {
     method: "POST",
@@ -126,7 +153,7 @@ async function generateGeminiOnce(
         imageConfig: { aspectRatio: "16:9", imageSize },
       },
     }),
-    signal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs ?? timeoutForSize(imageSize)),
   });
 
   const raw = await res.text();
@@ -145,18 +172,44 @@ async function generateGemini(
   prompt: string,
   model: string,
   imageSize: "1K" | "2K" | "4K" = "1K",
-  assets: ImageAsset[] = []
+  assets: ImageAsset[] = [],
+  budgetMs?: number
 ): Promise<Buffer> {
+  const started = Date.now();
+  const budgetLeft = () =>
+    budgetMs ? Math.max(0, budgetMs - (Date.now() - started)) : Infinity;
+  const callTimeout = Math.min(
+    timeoutForSize(imageSize),
+    budgetMs && budgetMs > 5_000 ? budgetMs - 2_000 : timeoutForSize(imageSize)
+  );
   let lastErr: Error | null = null;
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+
+  for (let attempt = 1; attempt <= MAX_RATE_RETRIES + 1; attempt++) {
     try {
-      return await generateGeminiOnce(apiKey, prompt, model, imageSize, assets);
+      // Never let a later attempt outlive the caller's remaining budget.
+      const attemptTimeout = Math.min(callTimeout, budgetLeft());
+      if (attemptTimeout < 5_000) break;
+      return await generateGeminiOnce(
+        apiKey,
+        prompt,
+        model,
+        imageSize,
+        assets,
+        attemptTimeout
+      );
     } catch (err) {
       lastErr = err instanceof Error ? err : new Error(String(err));
-      const retry = attempt < MAX_RETRIES && isRetryable(lastErr.message);
-      console.error(`Gemini attempt ${attempt}/${MAX_RETRIES} failed:`, lastErr.message);
+      const msg = lastErr.message;
+      // Never retry timeouts — that doubles hang time and causes proxy 504s.
+      const retry =
+        attempt <= MAX_RATE_RETRIES && isRateOrServerError(msg) && !isTimeoutError(msg);
+      console.error(`Gemini attempt ${attempt} failed:`, msg);
       if (!retry) break;
-      await sleep(1800 * attempt + Math.floor(Math.random() * 600));
+      // Exponential backoff with jitter, per Gemini API retry guidance.
+      const backoff = 1000 * 2 ** (attempt - 1);
+      const wait = backoff + Math.floor(Math.random() * 500);
+      if (budgetLeft() < wait + 10_000) break;
+      await sleep(wait);
     }
   }
   throw lastErr || new Error("Gemini failed");
@@ -168,7 +221,8 @@ export async function generateThumbnail(
   _inspirations: InspirationInput[] = [],
   imageSize: "1K" | "2K" | "4K" = "1K",
   allowFallback = false,
-  assets: ImageAsset[] = []
+  assets: ImageAsset[] = [],
+  budgetMs?: number
 ): Promise<GenerateResult> {
   const geminiKey = runtimeEnv("GEMINI_API_KEY") || runtimeEnv("GOOGLE_API_KEY");
   const cohesivityKey = runtimeEnv("COH_APPLICATION_KEY");
@@ -181,7 +235,14 @@ export async function generateThumbnail(
   }
 
   try {
-    const buf = await generateGemini(geminiKey, prompt, geminiModel, imageSize, assets);
+    const buf = await generateGemini(
+      geminiKey,
+      prompt,
+      geminiModel,
+      imageSize,
+      assets,
+      budgetMs
+    );
     return {
       imageBase64: buf.toString("base64"),
       backend: `gemini:${geminiModel}@${imageSize}`,
@@ -191,8 +252,8 @@ export async function generateThumbnail(
     console.error("Gemini failed:", msg);
     if (!allowFallback || !cohesivityKey) {
       throw new Error(
-        msg.includes("timeout") || msg.includes("aborted")
-          ? `Gemini timed out — use 1K. ${msg}`
+        isTimeoutError(msg)
+          ? `Gemini timed out — use 1K, fewer refs, or default model. ${msg}`
           : msg
       );
     }
@@ -206,6 +267,7 @@ async function generateOneVariant(
     model?: string;
     imageSize?: "1K" | "2K" | "4K";
     assets?: ImageAsset[];
+    budgetMs?: number;
   }
 ): Promise<VariantImage> {
   const result = await generateThumbnail(
@@ -214,7 +276,8 @@ async function generateOneVariant(
     [],
     options.imageSize || "1K",
     false,
-    options.assets || []
+    options.assets || [],
+    options.budgetMs
   );
   return {
     id: v.id,
@@ -234,8 +297,9 @@ async function generateOneVariant(
 }
 
 /**
- * Generate every variant sequentially (Gemini 3 rate-limits parallel image calls).
- * Retries failed slots in extra rounds until all succeed or rounds exhausted.
+ * Generate every variant concurrently, then retry misses in one parallel pass.
+ * Tier 2 allows 2k RPM / 4M TPM, so a 4-wide burst is well inside quota —
+ * wall time is one image call, not four.
  */
 export async function generateThumbnailVariants(
   variants: VariantSpec[],
@@ -245,35 +309,77 @@ export async function generateThumbnailVariants(
     assets?: ImageAsset[];
     /** Target count — defaults to all variants */
     targetCount?: number;
+    /** Hard wall-clock budget for the whole batch (ms). Default 200s. */
+    budgetMs?: number;
   }
 ): Promise<VariantImage[]> {
   const target = options.targetCount ?? variants.length;
+  const budgetMs = options.budgetMs ?? 200_000;
+  const started = Date.now();
   const succeeded = new Map<string, VariantImage>();
 
-  async function attemptVariant(v: VariantSpec) {
-    if (succeeded.has(v.id)) return;
-    const img = await generateOneVariant(v, options);
-    succeeded.set(v.id, img);
-    console.log(`Variant ${v.id} ok (${succeeded.size}/${target})`);
+  function remaining(): number {
+    return Math.max(0, budgetMs - (Date.now() - started));
   }
 
-  // Pass 1–2: sequential short attempts (stop as soon as we have target)
-  for (let round = 0; round < 2 && succeeded.size < target; round++) {
-    if (round > 0) await sleep(RETRY_ROUND_DELAY_MS);
-    for (let i = 0; i < variants.length; i++) {
-      if (succeeded.size >= target) break;
-      const v = variants[i];
-      if (succeeded.has(v.id)) continue;
-      try {
-        if (succeeded.size > 0 || i > 0) await sleep(BETWEEN_VARIANT_MS);
-        await attemptVariant(v);
-      } catch (err) {
-        console.error(
-          `Variant ${v.id} round${round + 1} failed:`,
-          err instanceof Error ? err.message : err
-        );
-      }
+  async function runOne(v: VariantSpec, modelOverride?: string, capMs?: number) {
+    if (succeeded.has(v.id)) return;
+    const left = Math.min(remaining(), capMs ?? Infinity);
+    if (left < 12_000) {
+      console.warn(`Skipping ${v.id} — only ${left}ms budget left`);
+      return;
     }
+    try {
+      const img = await generateOneVariant(v, {
+        ...options,
+        model: modelOverride ?? options.model,
+        budgetMs: left,
+      });
+      succeeded.set(v.id, img);
+      console.log(`Variant ${v.id} ok (${succeeded.size}/${target})`);
+    } catch (err) {
+      console.error(
+        `Variant ${v.id} failed:`,
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+
+  const pending = variants.slice(0, target);
+
+  // Reserve budget for fill rounds so one slow/flaky slot cannot eat the batch.
+  await Promise.all(pending.map((v) => runOne(v, undefined, budgetMs * 0.55)));
+
+  // Keep filling missing slots while budget allows. Gemini image 500s are
+  // transient, so a slot that failed once often succeeds on a later pass.
+  const selectedModel = options.model?.trim();
+  for (let round = 1; round <= MAX_FILL_ROUNDS; round++) {
+    const missing = pending.filter((v) => !succeeded.has(v.id));
+    if (!missing.length) break;
+    if (remaining() < 20_000) {
+      console.warn(
+        `Stopping fill rounds — ${remaining()}ms left, ${missing.length} variant(s) short`
+      );
+      break;
+    }
+    // After the first retry pass, fall back to the known-good image model so a
+    // flaky selected model cannot cap the batch below the requested count.
+    const useFallback =
+      round >= 2 && Boolean(selectedModel) && selectedModel !== FALLBACK_IMAGE_MODEL;
+    console.warn(
+      `Fill round ${round}: retrying ${missing.length} variant(s) in parallel${
+        useFallback ? ` on ${FALLBACK_IMAGE_MODEL}` : ""
+      }`
+    );
+    await sleep(BETWEEN_VARIANT_MS * round);
+    // Leave room for the next round unless this is the last one.
+    const roundCap =
+      round === MAX_FILL_ROUNDS ? remaining() : Math.max(25_000, remaining() * 0.6);
+    await Promise.all(
+      missing.map((v) =>
+        runOne(v, useFallback ? FALLBACK_IMAGE_MODEL : undefined, roundCap)
+      )
+    );
   }
 
   return variants

@@ -3,6 +3,7 @@ import type { StyleBrief } from "@/lib/style-intelligence";
 import type { ColorPaletteOption } from "@/lib/palette-types";
 import {
   buildPalettesFromSwatches,
+  ensureDistinctPaletteSets,
   extractDominantColors,
   thumbnailUrlCandidates,
   type ExtractedSwatch,
@@ -105,7 +106,7 @@ function styleBriefFromPalettes(
       extras?.summary ||
       `Color directions sampled from liked thumbnail pixels for "${topic}".`,
     colorPalette: palettes[0]?.colors || [],
-    typography: extras?.typography || "Bold ALL-CAPS sans-serif, high contrast",
+    typography: extras?.typography || "Impact / Bebas Neue condensed ALL-CAPS, thick outline, high contrast",
     composition: extras?.composition || "Hero subject with clean text space",
     emotionalHook: extras?.emotionalHook || "Optimistic, authoritative, grounded",
     textPatterns: extras?.textPatterns || [],
@@ -224,7 +225,7 @@ ${options?.hook ? `Hook: "${options.hook}"` : ""}
 CRITICAL: Colors were MEASURED from the liked thumbnail pixels. You must use ONLY these hex values (or very close ±8 RGB):
 MEASURED SWATCHES: ${measured}
 
-Base palettes already built from pixels (refine names/rationale; you may reorder the 4 hexes but do NOT invent new hues outside the measured set):
+Base palettes already built from pixels (refine names/rationale). CRITICAL: each palette box must look DIFFERENT — do not reshuffle the same 4 hexes across all boxes. Give each palette a distinct lead accent from MEASURED SWATCHES (overlap of at most 2 colors between any two palettes):
 ${pixelResult.palettes.map((p) => `${p.name}: ${p.colors.join(", ")}`).join("\n")}
 
 Liked notes:
@@ -236,7 +237,7 @@ ${dislikeNotes || "(none)"}
 ${options?.paletteFeedback ? `User feedback on previous palettes: ${options.paletteFeedback}` : ""}
 ${
   options?.previousPalettes?.length
-    ? `Previous options (vary names/order, stay in measured swatches):\n${options.previousPalettes
+    ? `Previous options (vary names AND color sets, stay in measured swatches):\n${options.previousPalettes
         .map((p) => `${p.name}: ${p.colors.join(", ")}`)
         .join("\n")}`
     : ""
@@ -254,7 +255,7 @@ Return ONLY JSON:
     }
   ],
   "summary": "2 sentence style synthesis from liked refs",
-  "typography": "rules",
+  "typography": "named display fonts + weight/case/outline/placement seen on the thumbs",
   "composition": "rules",
   "creativeDirection": "camera-real art direction",
   "doList": ["5 items"],
@@ -262,7 +263,7 @@ Return ONLY JSON:
   "suggestedHook": "ALL CAPS HOOK"
 }
 
-Provide exactly 4 palettes. Every hex MUST appear in MEASURED SWATCHES (case-insensitive).`;
+Provide exactly 4 palettes. Every hex MUST appear in MEASURED SWATCHES (case-insensitive). Each palette MUST have a different lead accent so the four boxes are visually distinct.`;
 
   try {
     const res = await fetch(`${GEMINI_API_BASE}/${MODEL}:generateContent`, {
@@ -328,7 +329,7 @@ Provide exactly 4 palettes. Every hex MUST appear in MEASURED SWATCHES (case-ins
     };
 
     const ids = likedVideos.map((v) => v.videoId);
-    const palettes = (parsed.palettes || [])
+    const rawPalettes = (parsed.palettes || [])
       .filter((p) => p?.colors?.length)
       .slice(0, 4)
       .map((p, i) => ({
@@ -341,7 +342,23 @@ Provide exactly 4 palettes. Every hex MUST appear in MEASURED SWATCHES (case-ins
           : ids.slice(0, 3),
       }));
 
-    if (!palettes.length) throw new Error("empty palettes");
+    if (!rawPalettes.length) throw new Error("empty palettes");
+
+    // Force visual diversity after Gemini (it often reshuffles the same set)
+    const diversified = ensureDistinctPaletteSets(
+      rawPalettes.map((p) => ({
+        id: p.id,
+        name: p.name,
+        colors: p.colors,
+        rationale: p.rationale,
+      })),
+      swatches
+    );
+    const palettes = diversified.map((p, i) => ({
+      ...rawPalettes[i],
+      ...p,
+      sourceVideoIds: rawPalettes[i]?.sourceVideoIds || ids.slice(0, 3),
+    }));
 
     return {
       palettes,
@@ -362,12 +379,12 @@ Provide exactly 4 palettes. Every hex MUST appear in MEASURED SWATCHES (case-ins
   }
 }
 
-/** Attach liked thumbnail images as generation reference assets (max 4). */
+/** Attach liked thumbnail images as generation reference assets (max 3). */
 export async function likedThumbsAsAssets(
   videos: InspirationVideo[]
 ): Promise<Array<{ mimeType: string; data: string; label: string }>> {
   const assets: Array<{ mimeType: string; data: string; label: string }> = [];
-  for (const v of videos.slice(0, 4)) {
+  for (const v of videos.slice(0, 3)) {
     const img = await fetchThumbnailBuffer(v.thumbnailUrl, v.videoId);
     if (img) {
       assets.push({

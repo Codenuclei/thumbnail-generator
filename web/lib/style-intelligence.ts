@@ -44,13 +44,13 @@ Return ONLY valid JSON with this shape:
 {
   "summary": "2 sentence style synthesis",
   "colorPalette": ["#hex or color name", ...],
-  "typography": "font weight, case, outline rules",
+  "typography": "named display fonts + weight/case/outline/placement observed on the thumbnails (e.g. Impact ALL-CAPS thick black outline bottom-left)",
   "composition": "layout and subject placement rules",
   "emotionalHook": "dominant emotion to convey",
   "textPatterns": ["short hook patterns observed"],
   "creativeDirection": "one paragraph art direction using camera-real language (lens, lighting, grain) — never hyperrealistic/8k/unreal engine/masterpiece",
   "doList": ["5 specific do's"],
-  "avoidList": ["5 specific don'ts including AI-slop looks: CGI gloss, plastic skin, glowing HUD, perfect symmetry"],
+  "avoidList": ["5 specific don'ts including AI-slop: CGI gloss, plastic skin, glowing HUD, perfect symmetry, odd yellow/amber light casts"],
   "suggestedHook": "3-5 word ALL CAPS hook if none provided"
 }
 
@@ -92,12 +92,12 @@ function fallbackBrief(topic: string, _videos: ScrapedVideo[], hook?: string): S
   return {
     summary: `Premium ${topic} thumbnails: clean factory visuals, optimistic business tone, bold professional hooks.`,
     colorPalette: ["#FFFFFF", "#1E3A5F", "#F5A623", "#2ECC71"],
-    typography: "Bold ALL-CAPS sans-serif, thick stroke, high contrast",
+    typography: "Impact / Bebas Neue condensed ALL-CAPS, thick black outline, 2–4 words, high contrast",
     composition: "Hero subject left, process environment right, clean negative space for text",
     emotionalHook: "Optimistic, authoritative, premium",
     textPatterns: ["HOW IT'S MADE", "INSIDE THE FACTORY", "THE PROCESS"],
     creativeDirection:
-      "Business-documentary still: Canon EOS R5, 35mm, natural window or practical factory light, Kodak Portra 400 response, minor film grain, real industrial grit, one confident hook — photographed on location, not CGI.",
+      "Business-documentary still: Canon EOS R5, 35mm, neutral daylight or cool LED factory light (no amber/yellow cast), minor film grain, real industrial grit, one confident hook — photographed on location, not CGI.",
     doList: [
       "Camera-real documentary look",
       "Natural or practical lighting only",
@@ -110,14 +110,15 @@ function fallbackBrief(topic: string, _videos: ScrapedVideo[], hook?: string): S
       "Shock/negative faces",
       "Cluttered collage",
       "AI-slop CGI gloss / unreal engine look",
-      "Glowing HUD / plastic over-smoothed surfaces",
+      "Odd yellow/amber glow or golden-hour wash on industrial scenes",
     ],
     suggestedHook: hook?.toUpperCase() || "HOW IT'S MADE",
   };
 }
 
 export function styleBriefToPrompt(brief: StyleBrief, topic: string, hook?: string): string {
-  const hookLine = hook || brief.suggestedHook || "";
+  // Only render hook text when the caller explicitly provided one (form value).
+  const hookLine = (hook || "").trim();
   return [
     `STYLE INTELLIGENCE BRIEF for "${topic}":`,
     brief.summary,

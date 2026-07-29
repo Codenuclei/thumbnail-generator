@@ -16,8 +16,8 @@ WEB = ROOT / "web"
 COHESIVITY_BASE = "https://cohesivity.ai"
 USER_AGENT = "cold: cursor"
 
-SKIP_DIRS = {"node_modules", ".next", ".git"}
-SKIP_FILES = {".env", ".cohesivity"}
+SKIP_DIRS = {"node_modules", ".next", ".git", ".data", "__pycache__"}
+SKIP_FILES = {".env", ".cohesivity", ".env.local", ".env.development", ".env.production"}
 
 
 def load_dotenv(path: Path) -> dict[str, str]:

@@ -2,14 +2,19 @@
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import { toast } from "sonner";
-import type { InspirationVideo, ThumbnailFeedback } from "@/lib/inspiration";
+import type { InspirationVideo, RejectedInspirationVideo, ThumbnailFeedback } from "@/lib/inspiration";
 import type { StyleBrief } from "@/lib/style-intelligence";
 import type { VideoContentMapping } from "@/lib/video-mapping";
 import { buildPipelineOverview, type PipelineOverview } from "@/lib/pipeline-overview";
 import { GenerationCanvas, type GeneratedVariant } from "@/components/GenerationCanvas";
 import { InspirationGrid } from "@/components/InspirationGrid";
+import { RejectedInspirationGrid } from "@/components/RejectedInspirationGrid";
 import { FeedbackDialog, type FeedbackMode } from "@/components/FeedbackDialog";
 import { StatusDialog } from "@/components/StatusDialog";
+import type { TopicContext } from "@/lib/gemini-filter";
+import {
+  buildGenerationContextSummary,
+} from "@/lib/generation-context";
 import { PalettePicker } from "@/components/PalettePicker";
 import { ColorPicker } from "@/components/ColorPicker";
 import type { EditorAsset } from "@/components/ThumbnailEditor";
@@ -31,8 +36,16 @@ import {
 } from "@/components/ui/select";
 import { HistoryMenu } from "@/components/HistoryMenu";
 import { ExportNavMenu } from "@/components/ExportNavMenu";
-import { Search, Sparkles, Loader2, Clapperboard, RefreshCw } from "lucide-react";
-import { cn } from "@/lib/utils";
+import {
+  ArrowRight,
+  LoaderCircle,
+  RefreshCw,
+  Sparkles,
+  Telescope,
+} from "lucide-react";
+import { StudioShell, normalizeStudioTab, type StudioTab } from "@/components/StudioShell";
+import { Badge } from "@/components/ui/badge";
+import { ShimmerButton } from "@/components/ui/shimmer-button";
 import { OpeningFramesPanel, type OpeningFrameClip } from "@/components/OpeningFramesPanel";
 import {
   extractIntelligenceFramesFromVideoFile,
@@ -115,6 +128,11 @@ const IMAGE_SIZES = [
 /** Fallback slice only if browser decode fails — Vercel body limit. */
 const VIDEO_UPLOAD_SLICE_BYTES = 4 * 1024 * 1024;
 
+// Force dynamic rendering so the root shell is never edge/CDN-cached across
+// deploys — this route previously shipped as a static prerender with a
+// 1-year edge cache, which made new deploys look "stuck" on old code.
+export const dynamic = "force-dynamic";
+
 export default function Home() {
   const [topic, setTopic] = useState("");
   const [channels, setChannels] = useState("");
@@ -130,6 +148,9 @@ export default function Home() {
   const [image, setImage] = useState<string | null>(null);
   const [backend, setBackend] = useState("");
   const [inspirations, setInspirations] = useState<InspirationVideo[]>([]);
+  const [rejectedInspirations, setRejectedInspirations] = useState<RejectedInspirationVideo[]>([]);
+  const [filterSummary, setFilterSummary] = useState("");
+  const [topicContext, setTopicContext] = useState<TopicContext | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [searchSource, setSearchSource] = useState("");
   const [styleBrief, setStyleBrief] = useState<StyleBrief | null>(null);
@@ -137,6 +158,9 @@ export default function Home() {
   const [feedback, setFeedback] = useState<FeedbackMap>({});
   const [geminiStatus, setGeminiStatus] = useState("checking…");
   const [autoSelect, setAutoSelect] = useState(false);
+  /** Light Gemini filter: show top 8 as-is, drop only extremely off-title. */
+  const [lightFilter, setLightFilter] = useState(true);
+  const [studioTab, setStudioTab] = useState<StudioTab>("topic");
   const [canvasTab, setCanvasTab] = useState<"overview" | "preview" | "edit">("overview");
   const [pipeline, setPipeline] = useState<PipelineOverview | null>(null);
   const [searchingTitles, setSearchingTitles] = useState(false);
@@ -161,6 +185,7 @@ export default function Home() {
     Record<string, "like" | "dislike" | null>
   >({});
   const [generatedVariants, setGeneratedVariants] = useState<GeneratedVariant[]>([]);
+  const [generatingSimilarId, setGeneratingSimilarId] = useState<string | null>(null);
   const [masterPrompt, setMasterPrompt] = useState(DEFAULT_MASTER_PROMPT);
   const [useOpeningFrames, setUseOpeningFrames] = useState(false);
   const [openingFrames, setOpeningFrames] = useState<OpeningFrameClip[]>([]);
@@ -188,6 +213,7 @@ export default function Home() {
   );
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   const videoFilesRef = useRef<Map<string, File>>(new Map());
+  const paletteAutoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const readyOpeningFrames = useMemo(
     () => openingFrames.filter((f) => f.status === "ready"),
@@ -450,8 +476,8 @@ export default function Home() {
           ? `Gemini picked @${pickedCandidate?.timestampSec ?? data.timestampSec}s`
           : `@${pickedCandidate?.timestampSec ?? data.timestampSec}s`;
       toast.success(
-        `${pickLabel} from full video · ${candidates.length || "?"} samples · ${mb}MB${
-          storageUrl ? " · stored" : ""
+        `${pickLabel} from full video · ${candidates.length || "?"} samples, ${mb}MB${
+          storageUrl ? ", stored" : ""
         }`
       );
     } catch (err) {
@@ -481,7 +507,7 @@ export default function Home() {
           status: "uploading",
           mimeType: "image/jpeg",
           data: "",
-          label: "Fetching YouTube stills…",
+          label: "Sampling YouTube key moments…",
           previewUrl: "",
         },
       ];
@@ -524,7 +550,7 @@ export default function Home() {
                 ...clip,
                 name: displayName,
                 status: "extracting",
-                label: `Gemini picking best of ${data.frames!.length} stills…`,
+                label: `Picking best of ${data.frames!.length} key moments…`,
                 storageUrl: data.url,
                 storagePath: data.path,
               }
@@ -588,7 +614,7 @@ export default function Home() {
         data: frameData,
         label:
           pick.label ||
-          `YouTube still · Gemini @${picked.timestampSec}s · ${candidates.length} candidates`,
+          `YouTube key moment @${picked.timestampSec}s · ${candidates.length} candidates`,
         previewUrl: picked.previewUrl,
         timestampSec: picked.timestampSec,
         bytesRead: data.bytes,
@@ -608,8 +634,8 @@ export default function Home() {
 
       const pickLabel =
         pick.pickSource === "gemini"
-          ? `Gemini picked best of ${candidates.length}`
-          : `Best of ${candidates.length} stills`;
+          ? `Gemini picked key moment (${candidates.length} samples)`
+          : `Best of ${candidates.length} key moments`;
       toast.success(`${pickLabel} · stored`);
 
       // Full media intelligence: captions + metadata + ranked stills.
@@ -763,14 +789,14 @@ export default function Home() {
       setMediaIntelligence(result);
       setStyleBrief(result.styleBrief);
       if (!topic.trim() && result.recommendedTopic) setTopic(result.recommendedTopic);
-      if (!hook.trim() && result.hooks[0]?.text) setHook(result.hooks[0].text);
+      // Do not auto-fill hook — user picks a suggested chip or types it.
       if (result.palettes.length) {
         setPalettes(result.palettes);
         setSelectedPaletteId(result.palettes[0].id);
       }
       if (clipsForAnalysis.length) setUseOpeningFrames(true);
       toast.success(
-        `Media understood · ${result.confidence.level} confidence · ${result.hooks.length} hooks`
+        `Media understood · ${result.confidence.level} confidence, ${result.hooks.length} hooks`
       );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Media analysis failed");
@@ -792,9 +818,10 @@ export default function Home() {
     const handoff = takeShareHandoff();
     const legacyToken = parseShareTokenFromLocation();
     if (draft && !handoff && !legacyToken) {
-      setTopic(draft.topic);
+      // Topic + hook start blank each load (user types fresh). Other studio prefs restore.
+      setTopic("");
       setChannels(draft.channels);
-      setHook(draft.hook);
+      setHook("");
       setComposition(draft.composition);
       setModel(draft.model);
       setImageSize(draft.imageSize);
@@ -1140,6 +1167,8 @@ export default function Home() {
 
   function resetResearch() {
     setInspirations([]);
+    setRejectedInspirations([]);
+    setFilterSummary("");
     setSelectedIds(new Set());
     setFeedback({});
     setTitleSuggestions([]);
@@ -1168,6 +1197,49 @@ export default function Home() {
   const selectedPalette = useMemo(
     () => palettes.find((p) => p.id === selectedPaletteId) || null,
     [palettes, selectedPaletteId]
+  );
+
+  const generationContextSummary = useMemo(
+    () =>
+      buildGenerationContextSummary({
+        topic,
+        hook,
+        topicContext: topicContext || undefined,
+        styleBrief: styleBrief || undefined,
+        selectedPalette: selectedPalette || undefined,
+        mediaIntelligence: intelligenceForGeneration(mediaIntelligence),
+        brandLanguage,
+        channelProfile: channelProfile || undefined,
+        userBrief: mediaScript.trim() || undefined,
+        feedback: inspirations
+          .filter((item) => feedback[item.videoId]?.rating || feedback[item.videoId]?.comment)
+          .map((item) => ({
+            videoId: item.videoId,
+            title: item.title,
+            channel: item.channel,
+            rating: feedback[item.videoId]?.rating ?? null,
+            comment: feedback[item.videoId]?.comment || "",
+          })),
+        selectedRefCount: selectedIds.size,
+        useOpeningFrames,
+        userMediaPhotoCount: mediaPhotos.length || undefined,
+      }),
+    [
+      topic,
+      hook,
+      topicContext,
+      styleBrief,
+      selectedPalette,
+      mediaIntelligence,
+      brandLanguage,
+      channelProfile,
+      mediaScript,
+      inspirations,
+      feedback,
+      selectedIds,
+      useOpeningFrames,
+      mediaPhotos.length,
+    ]
   );
 
   const livePipeline = useMemo(() => {
@@ -1214,6 +1286,20 @@ export default function Home() {
     if (livePipeline) setPipeline(livePipeline);
   }, [livePipeline]);
 
+  useEffect(() => {
+    if (likedVideos.length === 0 || palettes.length > 0 || suggestingPalettes) return;
+    if (normalizeStudioTab(studioTab) !== "research") return;
+
+    if (paletteAutoTimerRef.current) clearTimeout(paletteAutoTimerRef.current);
+    paletteAutoTimerRef.current = setTimeout(() => {
+      void suggestPalettes(undefined, undefined, undefined, { silent: true });
+    }, 800);
+
+    return () => {
+      if (paletteAutoTimerRef.current) clearTimeout(paletteAutoTimerRef.current);
+    };
+  }, [likedVideos.length, palettes.length, suggestingPalettes, studioTab]);
+
   async function handleResearch() {
     if (!topic.trim()) return;
 
@@ -1226,7 +1312,13 @@ export default function Home() {
       const res = await fetch("/api/search/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: topic, channels, hook: hook || undefined }),
+        body: JSON.stringify({
+          title: topic,
+          channels,
+          hook: hook || undefined,
+          filterMode: lightFilter ? "light" : "strict",
+          lightFilter,
+        }),
       });
 
       if (!res.ok || !res.body) {
@@ -1276,29 +1368,42 @@ export default function Home() {
 
           if (event.type === "complete") {
             const results = (event.results as InspirationVideo[]) || [];
-            if (!results.length) throw new Error("No premium thumbnails passed quality filter");
+            if (!results.length) throw new Error("No thumbnails matched this title");
 
             setInspirations(results);
+            setRejectedInspirations((event.rejectedResults as RejectedInspirationVideo[]) || []);
+            setFilterSummary(String(event.filterSummary || ""));
             setSelectedIds(
               autoSelect ? new Set(results.map((r) => r.videoId)) : new Set()
             );
             setTitleSuggestions((event.titleSuggestions as string[]) || []);
             setStyleBrief((event.styleBrief as StyleBrief) || null);
+            setTopicContext((event.topicContext as TopicContext) || null);
             setSearchSource(
               [
+                event.youtubeQuery
+                  ? `YT query: "${String(event.youtubeQuery)}"`
+                  : null,
                 event.source,
+                event.filterMode === "light" ? "YouTube order top 8" : null,
                 event.qualityRejected ? `${event.qualityRejected} rejected` : null,
-                event.filteredCount ? `${event.filteredCount} filtered` : null,
               ]
                 .filter(Boolean)
                 .join(" · ")
             );
             setSearchProgress(100);
-            setSearchStatus("Research complete");
-            if (!hook && (event.styleBrief as StyleBrief)?.suggestedHook) {
-              setHook((event.styleBrief as StyleBrief).suggestedHook || "");
-            }
-            toast.success(`Found ${results.length} premium thumbnails`);
+            setSearchStatus(
+              event.youtubeQuery
+                ? `Research complete · YouTube query: "${String(event.youtubeQuery)}"`
+                : "Research complete"
+            );
+            setStudioTab("research");
+            // Do not auto-fill hook from styleBrief.suggestedHook.
+            toast.success(
+              lightFilter
+                ? `Top ${results.length} for "${String(event.youtubeQuery || topic)}" (YouTube order)`
+                : `Found ${results.length} title-matched thumbnails`
+            );
           }
 
           if (event.type === "error") {
@@ -1324,12 +1429,31 @@ export default function Home() {
     });
   }
 
+  function mergeLikedTitlesIntoSuggestions(liked: InspirationVideo[]) {
+    const likedTitles = liked.map((v) => v.title).filter(Boolean);
+    if (!likedTitles.length) return;
+    setTitleSuggestions((prev) => {
+      const merged = [...likedTitles, ...prev];
+      return merged.filter(
+        (t, i) =>
+          t.trim() &&
+          merged.findIndex((x) => x.toLowerCase() === t.toLowerCase()) === i
+      ).slice(0, 10);
+    });
+  }
+
   function applyRating(videoId: string, rating: "like" | "dislike", comment: string) {
     setFeedback((prev) => ({
       ...prev,
       [videoId]: { rating, comment },
     }));
-    if (rating === "like") setSelectedIds((prev) => new Set(prev).add(videoId));
+    if (rating === "like") {
+      setSelectedIds((prev) => new Set(prev).add(videoId));
+      const withCurrent = inspirations.filter(
+        (v) => v.videoId === videoId || feedback[v.videoId]?.rating === "like"
+      );
+      mergeLikedTitlesIntoSuggestions(withCurrent);
+    }
     if (rating === "dislike") {
       setSelectedIds((prev) => {
         const next = new Set(prev);
@@ -1342,7 +1466,8 @@ export default function Home() {
   async function suggestPalettes(
     paletteFeedback?: string,
     likedOverride?: InspirationVideo[],
-    feedbackOverride?: ThumbnailFeedback[]
+    feedbackOverride?: ThumbnailFeedback[],
+    options?: { silent?: boolean }
   ) {
     const liked =
       likedOverride ||
@@ -1377,13 +1502,13 @@ export default function Home() {
         );
       }
       if (next[0]) setSelectedPaletteId(next[0].id);
-      if (data.styleBrief?.suggestedHook && !hook) {
-        setHook(data.styleBrief.suggestedHook);
+      // Do not auto-fill hook from palette styleBrief.
+      if (!options?.silent) {
+        const src = data.source === "pixels" || data.source === "pixels+gemini"
+          ? "sampled from liked thumbs"
+          : "fallback";
+        toast.success(`${next.length} palettes ${src}`);
       }
-      const src = data.source === "pixels" || data.source === "pixels+gemini"
-        ? "sampled from liked thumbs"
-        : "fallback";
-      toast.success(`${next.length} palettes ${src}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Palette suggestion failed");
     } finally {
@@ -1391,25 +1516,22 @@ export default function Home() {
     }
   }
 
-  function triggerPaletteSuggest(
-    videoId: string,
-    comment: string,
-    baseFeedback: FeedbackMap = feedback
-  ) {
-    if (palettes.length > 0) return;
-    const nextFeedback: FeedbackMap = {
-      ...baseFeedback,
-      [videoId]: { rating: "like", comment },
-    };
-    const liked = inspirations.filter((v) => nextFeedback[v.videoId]?.rating === "like");
-    const payload: ThumbnailFeedback[] = liked.map((v) => ({
-      videoId: v.videoId,
-      title: v.title,
-      channel: v.channel,
-      rating: "like",
-      comment: nextFeedback[v.videoId]?.comment || "",
-    }));
-    void suggestPalettes(undefined, liked, payload);
+  type ShellTab = Exclude<StudioTab, "media">;
+
+  function handleStudioTabChange(tab: ShellTab) {
+    const next = normalizeStudioTab(tab);
+    const current = normalizeStudioTab(studioTab);
+    setStudioTab(next);
+
+    const enteringStyle = next === "style" && current !== "style";
+    if (
+      enteringStyle &&
+      likedVideos.length > 0 &&
+      !palettes.length &&
+      !suggestingPalettes
+    ) {
+      void suggestPalettes(undefined, undefined, undefined, { silent: true });
+    }
   }
 
   function openFeedback(item: InspirationVideo, mode: FeedbackMode) {
@@ -1439,10 +1561,9 @@ export default function Home() {
 
     if (mode === "explore") {
       if (current !== "like") {
-        // Auto-like so Explore isn't dead, then open notes
+        // Auto-like so Explore isn't dead, then open notes — palettes wait for explicit suggest.
         applyRating(item.videoId, "like", existingComment);
-        triggerPaletteSuggest(item.videoId, existingComment);
-        toast.success("Liked — add a note or find similar");
+        toast.success("Liked. Add a note or find similar");
       }
       setFeedbackDialog({ open: true, mode: "explore", item });
       return;
@@ -1451,8 +1572,7 @@ export default function Home() {
     // Like / dislike apply immediately so button state updates right away
     applyRating(item.videoId, mode, existingComment);
     if (mode === "like") {
-      toast.success("Liked");
-      triggerPaletteSuggest(item.videoId, existingComment);
+      toast.success("Liked — palettes suggest automatically when you continue");
     } else {
       toast.success("Disliked");
     }
@@ -1465,10 +1585,6 @@ export default function Home() {
     applyRating(item.videoId, mode, comment);
     setFeedbackDialog({ open: false, mode: null, item: null });
     toast.success(mode === "like" ? "Note saved on like" : "Note saved on dislike");
-
-    if (mode === "like") {
-      triggerPaletteSuggest(item.videoId, comment);
-    }
   }
 
   async function exploreSimilar(item: InspirationVideo, comment?: string) {
@@ -1505,8 +1621,24 @@ export default function Home() {
       if (!res.ok) throw new Error(data.error || "Similar search failed");
 
       const similar = (data.results || []) as InspirationVideo[];
+      const rejected = (data.rejectedResults || []) as RejectedInspirationVideo[];
+
+      if (rejected.length) {
+        setRejectedInspirations((prev) => {
+          const ids = new Set(prev.map((v) => v.videoId));
+          return [...prev, ...rejected.filter((v) => !ids.has(v.videoId))];
+        });
+        if (data.filterSummary) {
+          setFilterSummary(String(data.filterSummary));
+        }
+      }
+
       if (!similar.length) {
-        toast.info("No similar premium thumbnails found");
+        toast.info(
+          rejected.length
+            ? `No similar thumbnails passed the filter (${rejected.length} dropped)`
+            : "No similar premium thumbnails found"
+        );
         return;
       }
 
@@ -1519,7 +1651,9 @@ export default function Home() {
         if (autoSelect) similar.forEach((v) => next.add(v.videoId));
         return next;
       });
-      toast.success(`Added ${similar.length} similar thumbnails from your feedback`);
+      const toastParts = [`Added ${similar.length} similar thumbnails`];
+      if (rejected.length) toastParts.push(`${rejected.length} dropped`);
+      toast.success(toastParts.join(", "));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Explore failed");
       toast.error(err instanceof Error ? err.message : "Explore failed");
@@ -1570,13 +1704,20 @@ export default function Home() {
     iterationIndex?: number;
     editAssets?: EditorAsset[];
     baseImage?: string;
+    seedVariant?: { image: string; label: string; note?: string };
   }) {
     const selected = inspirations.filter((item) => selectedIds.has(item.videoId));
     const isIteration = Boolean(opts?.iterationNote?.trim());
+    const isSeedSimilar = Boolean(opts?.seedVariant?.image);
 
     // Scratch mode: topic (+ optional hook) is enough. Refs / media / likes are optional.
 
     const brief = applyPaletteToBrief(styleBrief, selectedPalette) || styleBrief;
+    // Never let a stale suggestedHook ride along when the form hook is empty.
+    const briefForGenerate =
+      brief && !hook.trim()
+        ? { ...brief, suggestedHook: undefined }
+        : brief;
 
     let compressedBase: string | undefined;
     let compressedAssets = opts?.editAssets || [];
@@ -1594,6 +1735,16 @@ export default function Home() {
       );
     }
 
+    let compressedSeed: { data: string; label: string; note?: string } | undefined;
+    if (isSeedSimilar && opts?.seedVariant) {
+      const c = await compressDataUrl(opts.seedVariant.image, { maxWidth: 1280, quality: 0.82 });
+      compressedSeed = {
+        data: c.data,
+        label: opts.seedVariant.label,
+        note: opts.seedVariant.note,
+      };
+    }
+
     const res = await fetch("/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1603,7 +1754,7 @@ export default function Home() {
         composition: composition === "auto" ? "" : composition,
         model: model === "default" ? "" : model,
         imageSize,
-        styleBrief: brief,
+        styleBrief: briefForGenerate,
         masterPrompt,
         useOpeningFrames,
         openingFrames:
@@ -1617,15 +1768,26 @@ export default function Home() {
         compositionFactors,
         selectedPalette,
         paletteOptions: palettes,
-        variantCount: isIteration ? 1 : 2,
+        variantCount: isIteration ? 1 : 4,
         inspirations: selected,
         feedback: buildFeedbackPayload(),
         titleSuggestions,
+        likedTitles: likedVideos.map((v) => v.title),
         mediaIntelligence: intelligenceForGeneration(mediaIntelligence),
         brandLanguage,
         channelProfile: channelProfile || undefined,
         userBrief: mediaScript.trim() || undefined,
         userMediaPhotoCount: mediaPhotos.length || undefined,
+        topicContext: topicContext || undefined,
+        seedVariant: compressedSeed
+          ? {
+              image: compressedSeed.data,
+              label: compressedSeed.label,
+              note:
+                compressedSeed.note ||
+                `More variants inspired by "${compressedSeed.label}" — same story direction, varied camera and type.`,
+            }
+          : undefined,
         iterationNote: opts?.iterationNote,
         iterationIndex: opts?.iterationIndex,
         baseImage: compressedBase ?? opts?.baseImage?.replace(/^data:[^;]+;base64,/, ""),
@@ -1641,7 +1803,7 @@ export default function Home() {
               label: `Media photo: ${photo.name}`,
             })),
       }),
-      signal: AbortSignal.timeout(150_000),
+      signal: AbortSignal.timeout(240_000),
     });
 
     let data: {
@@ -1670,7 +1832,7 @@ export default function Home() {
     } catch {
       throw new Error(
         res.status === 504 || res.status === 502
-          ? "Generation timed out on the server — try 1K with 1–2 references."
+          ? "Generation timed out. Switch to 1K, drop extra refs or photos, then retry."
           : `Generation failed (${res.status})`
       );
     }
@@ -1683,12 +1845,12 @@ export default function Home() {
     if (!topic.trim()) return;
 
     if (useOpeningFrames && readyOpeningFrames.length === 0) {
-      toast.error("Upload a video — we'll sample the full runtime for the best thumbnail still");
+      toast.error("Upload a video. We'll sample the full runtime for the best thumbnail still");
       return;
     }
 
     if (likedVideos.length && !palettes.length) {
-      await suggestPalettes();
+      await suggestPalettes(undefined, undefined, undefined, { silent: true });
     }
 
     setLoading(true);
@@ -1742,7 +1904,7 @@ export default function Home() {
           : variants.length > 1
             ? `${variants.length} of ${stats?.requested || 4} combinations ready`
             : variants.length === 1
-              ? "Only 1 variant succeeded — try again with 1K"
+              ? "Only 1 variant succeeded. Try again with 1K"
               : "Thumbnail generated"
       );
       void persistSession();
@@ -1752,6 +1914,67 @@ export default function Home() {
       toast.error(msg);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleGenerateSimilar(variant: GeneratedVariant) {
+    if (!topic.trim()) return;
+
+    setGeneratingSimilarId(variant.id);
+    setLoading(true);
+    setError("");
+    setCanvasTab("preview");
+    setGeneratedVariants([]);
+
+    try {
+      const data = await runGeneration({
+        seedVariant: {
+          image: variant.image,
+          label: variant.suggestedTitle || variant.label,
+          note: `Generate siblings inspired by this output — keep story, setting, and hook energy (${variant.cameraFilterLabel || "variant"} · ${variant.compositionFactorLabel || "framing"}).`,
+        },
+      });
+      const variants: GeneratedVariant[] = Array.isArray(data.images)
+        ? data.images.map((v) => ({
+            id: v.id,
+            image: `data:image/png;base64,${v.image}`,
+            label: v.label,
+            suggestedTitle: v.suggestedTitle || v.label,
+            paletteId: v.paletteId,
+            paletteName: v.paletteName,
+            composition: v.composition,
+            compositionLabel: v.compositionLabel,
+            cameraFilter: v.cameraFilter,
+            cameraFilterLabel: v.cameraFilterLabel,
+            compositionFactor: v.compositionFactor,
+            compositionFactorLabel: v.compositionFactorLabel,
+          }))
+        : [];
+
+      const img = variants[0]?.image || null;
+      setGeneratedVariants(variants);
+      setImage(img);
+      setBackend(data.backend || "");
+      if (data.pipeline) setPipeline(data.pipeline);
+      if (img) {
+        setIterations([{ image: img, note: "", backend: data.backend || "", index: 1 }]);
+      }
+      setIterationIndex(1);
+      setIterationNote("");
+      setAssets([]);
+      toast.success(
+        variants.length > 1
+          ? `${variants.length} similar variants from your pick`
+          : "Similar variant ready"
+      );
+      void persistSession();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Similar generation failed";
+      setError(msg);
+      toast.error(msg);
+    } finally {
+      setLoading(false);
+      setGeneratingSimilarId(null);
     }
   }
 
@@ -1866,28 +2089,38 @@ export default function Home() {
   }
 
   return (
-    <div className="h-dvh overflow-hidden flex flex-col bg-[#f7f7f7]">
-      {/* Top bar */}
-      <header className="shrink-0 bg-[#f7f7f7]">
-        <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-4 px-6 py-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <Clapperboard className="size-5 shrink-0 text-[#171618]" strokeWidth={1.75} />
-            <h1 className="type-heading-sm text-[#171618]">Thumbnail Studio</h1>
-          </div>
-
-          <nav className="hidden items-center rounded-[100px] border border-[#efefef] bg-white p-1 shadow-[var(--shadow-subtle-2)] sm:flex">
-            <span className="rounded-[9999px] px-4 py-1.5 type-ui text-[#171618]">
-              Research
-            </span>
-            <span className="rounded-[9999px] px-4 py-1.5 type-ui text-[#727578]">
-              Generate
-            </span>
-            <span className="rounded-[9999px] px-4 py-1.5 type-ui text-[#727578]">
-              Canvas
-            </span>
-          </nav>
-
-          <div className="flex shrink-0 items-center gap-2">
+    <>
+      <StudioShell
+        tab={studioTab}
+        onTabChange={handleStudioTabChange}
+        geminiStatus={geminiStatus}
+        counts={{
+          photos: mediaPhotos.length + openingFrames.length,
+          refs: inspirations.length,
+          selected: selectedIds.size,
+          variants: generatedVariants.length,
+        }}
+        researchNextExtra={
+          likedVideos.length > 0 && palettes.length > 0 ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7"
+              disabled={suggestingPalettes}
+              onClick={() => void suggestPalettes()}
+            >
+              {suggestingPalettes ? (
+                <LoaderCircle className="size-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="size-3.5" />
+              )}
+              Refresh palettes
+            </Button>
+          ) : null
+        }
+        headerActions={
+          <>
             <ExportNavMenu
               title={topic}
               topic={topic}
@@ -1918,87 +2151,158 @@ export default function Home() {
                 )
               }
             />
-            {geminiStatus === "connected" ? (
-              <span className="inline-flex items-center gap-1.5 rounded-[100px] border border-[#efefef] bg-[#defafe] px-3 py-1 type-caption font-medium text-[#004d60]">
-                Gemini connected
-              </span>
+          </>
+        }
+        generateAction={
+          <ShimmerButton
+            type="submit"
+            form="generate-form"
+            disabled={loading || !topic.trim()}
+            borderRadius="8px"
+            background="rgba(0, 0, 0, 1)"
+            className="h-9 gap-1.5 px-4 text-sm font-medium disabled:opacity-50"
+          >
+            {loading ? (
+              <>
+                <LoaderCircle className="size-3.5 animate-spin" />
+                Generating…
+              </>
             ) : (
-              <span className="inline-flex items-center rounded-[9999px] border border-[#efefef] bg-white px-3 py-1 type-caption font-medium text-[#727578]">
-                Gemini: {geminiStatus}
-              </span>
+              <>
+                <Sparkles className="size-3.5" />
+                Generate variants
+              </>
             )}
+          </ShimmerButton>
+        }
+        briefAction={
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="autoSelect"
+              checked={autoSelect}
+              onCheckedChange={(v) => setAutoSelect(v === true)}
+            />
+            <Label
+              htmlFor="autoSelect"
+              className="cursor-pointer font-normal text-[var(--text-tertiary)]"
+            >
+              Auto-select refs
+            </Label>
           </div>
-        </div>
-        <div className="border-b border-[#efefef]" />
-      </header>
-
-      <div className="mx-auto grid min-h-0 w-full max-w-[1600px] flex-1 grid-cols-1 gap-4 p-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)] sm:gap-5 sm:p-5">
-        {/* Research — primary workspace */}
-        <aside className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-[20px] border-0 bg-white shadow-[var(--shadow-md)]">
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain scrollbar-none">
-            <section className="space-y-3 border-b border-[#efefef] p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h2 className="type-ui text-[#171618]">Research</h2>
-                  <p className="mt-0.5 type-caption text-[#727578]">
-                    Rate refs with notes — like, dislike, then explore similar
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Checkbox
-                    id="autoSelect"
-                    checked={autoSelect}
-                    onCheckedChange={(v) => setAutoSelect(v === true)}
-                  />
-                  <Label htmlFor="autoSelect" className="cursor-pointer type-caption font-normal text-[#727578]">
-                    Auto-select
-                  </Label>
-                </div>
-              </div>
-
-              <div className="grid gap-3 lg:grid-cols-[1.4fr_1fr_auto] lg:items-end">
+        }
+        briefPanel={
+          <div className="space-y-6">
+            <section className="space-y-4">
+              <div className="grid gap-3 lg:grid-cols-[1.4fr_1fr] lg:items-start">
                 <div className="space-y-1.5">
-                  <Label htmlFor="topic">Video title / topic</Label>
+                  <Label htmlFor="topic">Video title</Label>
                   <Input
                     id="topic"
-                    placeholder="e.g. How Alcohol Is Made in India | Inside the Factory"
+                    placeholder="How Alcohol Is Made in India"
                     value={topic}
                     onChange={(e) => setTopic(e.target.value)}
                   />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="channels">
-                    Channels <span className="font-normal text-[#727578]">(optional)</span>
+                    Channels{" "}
+                    <span className="font-normal text-[var(--text-tertiary)]">
+                      optional
+                    </span>
                   </Label>
                   <Input
                     id="channels"
-                    placeholder="@channel or youtube.com/@channel"
+                    placeholder="@channel"
                     value={channels}
                     onChange={(e) => setChannels(e.target.value)}
                   />
                 </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="hook-topic">
+                  Hook{" "}
+                  <span className="font-normal text-[var(--text-tertiary)]">
+                    optional
+                  </span>
+                </Label>
+                <Input
+                  id="hook-topic"
+                  placeholder="HOW IT'S MADE"
+                  value={hook}
+                  onChange={(e) => setHook(e.target.value)}
+                  aria-describedby="hook-topic-hint"
+                />
+                <p
+                  id="hook-topic-hint"
+                  className="type-caption text-[var(--text-tertiary)]"
+                >
+                  Text burned onto the thumbnail. Leave blank for none.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
                 <Button
-                  size="default"
-                  className="w-full lg:w-auto lg:min-w-[120px]"
-                  onClick={handleResearch}
+                  variant="outline"
+                  onClick={() => void handleResearch()}
                   disabled={searching || exploring || !topic.trim()}
                 >
                   {searching ? (
                     <>
-                      <Loader2 className="size-4 animate-spin" />
+                      <LoaderCircle className="size-4 animate-spin" />
                       Searching
                     </>
                   ) : (
                     <>
-                      <Search className="size-4" />
-                      Research
+                      <Telescope className="size-4" />
+                      Research refs
                     </>
                   )}
                 </Button>
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="lightFilter"
+                    checked={lightFilter}
+                    onCheckedChange={(v) => setLightFilter(v === true)}
+                  />
+                  <Label
+                    htmlFor="lightFilter"
+                    className="cursor-pointer font-normal text-[var(--text-secondary-chromatic)]"
+                  >
+                    Light Gemini filter (top 8)
+                  </Label>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="text-[var(--text-secondary-chromatic)] hover:text-[#171618]"
+                  disabled={!topic.trim()}
+                  onClick={() => setStudioTab("generate")}
+                >
+                  Skip to Generate
+                  <ArrowRight className="size-4" />
+                </Button>
               </div>
+              <p className="type-caption text-[var(--text-tertiary)]">
+                {lightFilter
+                  ? "Sends your title as-is to YouTube and shows the top 8 in YouTube's order. Gemini drops wrong visual context using topic understanding."
+                  : "Strict mode: expands queries and keeps only strong title matches."}
+              </p>
             </section>
 
-            <section className="space-y-4 p-4">
+            <section className="space-y-3 border-t border-[#efefef] pt-5">
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="type-ui text-[#171618]">Media</h3>
+                  <Badge
+                    variant="outline"
+                    className="border-[#c8c9cb] font-normal type-caption text-[#5c5e60]"
+                  >
+                    Optional
+                  </Badge>
+                </div>
+                <p className="type-caption leading-snug text-[#5c5e60]">
+                  Person, product, backdrop, YouTube URL, or key frames — skip if you only have a title.
+                </p>
+              </div>
               <MediaIntelligencePanel
                 youtubeUrl={mediaYoutubeUrl}
                 onYoutubeUrlChange={setMediaYoutubeUrl}
@@ -2007,7 +2311,9 @@ export default function Home() {
                 photos={mediaPhotos}
                 onUploadPhotos={(files) => void handleUploadMediaPhotos(files)}
                 onRemovePhoto={(id) =>
-                  setMediaPhotos((previous) => previous.filter((photo) => photo.id !== id))
+                  setMediaPhotos((previous) =>
+                    previous.filter((photo) => photo.id !== id)
+                  )
                 }
                 openingFramesSlot={
                   <OpeningFramesPanel
@@ -2040,367 +2346,378 @@ export default function Home() {
                     readyOpeningFrames.length
                 )}
               />
-
-              <ChannelProfilePanel
-                channelInput={channelProfileInput}
-                topic={topic}
-                profile={channelProfile}
-                loading={analyzingChannel}
-                onChannelInputChange={setChannelProfileInput}
-                onAnalyze={() => void handleAnalyzeChannelProfile()}
-                onClear={() => {
-                  setChannelProfile(null);
-                  setChannelProfileInput("");
-                }}
-              />
-
-              <BrandLanguagePanel language={brandLanguage} onChange={setBrandLanguage} />
-
-              <div className="space-y-2 rounded-[20px] border border-[#efefef] bg-[#f7f7f7] p-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <Label htmlFor="master-prompt" className="type-ui text-[#171618]">
-                    Quality direction
-                  </Label>
-                  <button
-                    type="button"
-                    className="type-caption text-[#38296c] hover:underline"
-                    onClick={() => setMasterPrompt(DEFAULT_MASTER_PROMPT)}
-                  >
-                    Reset default
-                  </button>
-                </div>
-                <Textarea
-                  id="master-prompt"
-                  value={masterPrompt}
-                  onChange={(e) => setMasterPrompt(e.target.value)}
-                  rows={8}
-                  className="min-h-[140px] resize-y bg-white type-ui font-normal leading-relaxed text-[#727578]"
-                  placeholder="Master quality / anti-slop prompt used for every generation…"
-                />
-
-                <div className="space-y-2 border-t border-[#efefef] pt-3">
-                  <p className="type-ui text-[#171618]">Composition factors</p>
-                  <p className="type-caption text-[#727578]">
-                    Classic framing rules for the hook visual (first look)
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {COMPOSITION_FACTORS.map((factor) => {
-                      const active = compositionFactors.includes(factor.id);
-                      return (
-                        <button
-                          key={factor.id}
-                          type="button"
-                          title={factor.prompt}
-                          onClick={() =>
-                            setCompositionFactors((prev) =>
-                              prev.includes(factor.id)
-                                ? prev.filter((id) => id !== factor.id)
-                                : [...prev, factor.id]
-                            )
-                          }
-                          className={cn(
-                            "rounded-[9999px] border px-3 py-1.5 type-caption transition-colors",
-                            active
-                              ? "border-[#171618] bg-[#171618] text-white"
-                              : "border-[#efefef] bg-white text-[#727578] hover:bg-[#f7f7f7]"
-                          )}
-                        >
-                          {factor.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {styleBrief?.summary && (
-                  <p className="type-caption text-[#727578]">
-                    Research note: {styleBrief.summary}
-                  </p>
-                )}
-                <p className="type-caption text-[#727578]">
-                  Colors come from analyzed media or liked qualified references
-                </p>
-              </div>
-
-              {(inspirations.length > 0 ||
-                likedVideos.length > 0 ||
-                palettes.length > 0 ||
-                Boolean(mediaIntelligence)) && (
-                <PalettePicker
-                  palettes={palettes}
-                  selectedId={selectedPaletteId}
-                  loading={suggestingPalettes}
-                  hasLikes={likedVideos.length > 0}
-                  hasMediaColors={Boolean(mediaIntelligence?.palettes.length)}
-                  sourceLabel={
-                    mediaIntelligence?.colors.source === "measured"
-                      ? "Measured from supplied media"
-                      : mediaIntelligence
-                        ? "Neutral fallback from content context"
-                      : "Extracted from liked thumbs"
-                  }
-                  paletteRatings={paletteRatings}
-                  onSelect={(p) => {
-                    setSelectedPaletteId(p.id);
-                    setStyleBrief((prev) => applyPaletteToBrief(prev, p) || prev);
-                  }}
-                  onUpdate={(p) => {
-                    setPalettes((prev) => prev.map((x) => (x.id === p.id ? p : x)));
-                    setSelectedPaletteId(p.id);
-                    setStyleBrief((prev) => applyPaletteToBrief(prev, p) || prev);
-                  }}
-                  onSuggest={(note) => void suggestPalettes(note)}
-                  onRatePalette={(id, rating) => {
-                    setPaletteRatings((prev) => ({
-                      ...prev,
-                      [id]: prev[id] === rating ? null : rating,
-                    }));
-                  }}
-                />
-              )}
-
-              {(inspirations.length > 0 || searching) && (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between type-caption text-[#727578]">
-                    <span>
-                      {inspirations.length} results
-                      {searchSource ? ` · ${searchSource}` : ""}
-                      {exploreLabel && !exploring ? ` · similar to “${exploreLabel}”` : ""}
-                    </span>
-                    <span className="font-medium text-[#171618]">
-                      {selectedIds.size} selected
-                    </span>
-                  </div>
-                  <InspirationGrid
-                    items={inspirations}
-                    selectedIds={selectedIds}
-                    feedback={feedback}
-                    exploring={exploring}
-                    onToggle={toggleSelection}
-                    onLike={(item) => openFeedback(item, "like")}
-                    onDislike={(item) => openFeedback(item, "dislike")}
-                    onExplore={(item) => openFeedback(item, "explore")}
-                    onEditFeedback={(item) =>
-                      openFeedback(
-                        item,
-                        feedback[item.videoId]?.rating === "dislike" ? "dislike" : "like"
-                      )
-                    }
-                  />
-                </div>
-              )}
-
-              {!inspirations.length && !searching && (
-                <div className="rounded-[12px] border border-[#efefef] bg-[#f7f7f7] px-4 py-6 text-center">
-                  <p className="type-ui text-[#171618]">No references yet</p>
-                  <p className="mt-1 type-caption text-[#727578]">
-                    Optional — enter a topic and hit Generate to start from scratch. Add photos +
-                    a brief in Media intelligence for image-grounded scratch, or Research for
-                    reference thumbs.
-                  </p>
-                </div>
-              )}
             </section>
           </div>
+        }
+        researchPanel={
+          <div className="space-y-4">
+            {(inspirations.length > 0 ||
+              likedVideos.length > 0 ||
+              palettes.length > 0 ||
+              Boolean(mediaIntelligence)) && (
+              <PalettePicker
+                palettes={palettes}
+                selectedId={selectedPaletteId}
+                loading={suggestingPalettes}
+                hasLikes={likedVideos.length > 0}
+                hasMediaColors={Boolean(mediaIntelligence?.palettes.length)}
+                sourceLabel={
+                  mediaIntelligence?.colors.source === "measured"
+                    ? "Measured from supplied media"
+                    : mediaIntelligence
+                      ? "Neutral fallback from content context"
+                      : "Extracted from liked thumbs"
+                }
+                paletteRatings={paletteRatings}
+                onSelect={(p) => {
+                  setSelectedPaletteId(p.id);
+                  setStyleBrief((prev) => applyPaletteToBrief(prev, p) || prev);
+                }}
+                onUpdate={(p) => {
+                  setPalettes((prev) => prev.map((x) => (x.id === p.id ? p : x)));
+                  setSelectedPaletteId(p.id);
+                  setStyleBrief((prev) => applyPaletteToBrief(prev, p) || prev);
+                }}
+                onSuggest={(note) => void suggestPalettes(note)}
+                onRatePalette={(id, rating) => {
+                  setPaletteRatings((prev) => ({
+                    ...prev,
+                    [id]: prev[id] === rating ? null : rating,
+                  }));
+                }}
+              />
+            )}
 
-          <section className="shrink-0 space-y-2 border-t border-[#efefef] bg-white px-3 py-2.5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="min-w-0">
-                <h2 className="type-ui text-[#171618]">Generate</h2>
-                <p className="type-caption text-[#727578]">
-                  Topic alone, or Media brief + photos (Analyze optional)
-                </p>
+            {(inspirations.length > 0 ||
+              rejectedInspirations.length > 0 ||
+              searching) && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="type-caption text-[var(--text-tertiary)]">
+                    {inspirations.length} kept
+                    {rejectedInspirations.length
+                      ? `, ${rejectedInspirations.length} dropped`
+                      : ""}
+                    {searchSource ? `, ${searchSource}` : ""}
+                    {exploreLabel && !exploring ? `, similar to “${exploreLabel}”` : ""}
+                  </p>
+                  <Badge variant="secondary" className="tabular-nums">
+                    {selectedIds.size} selected
+                  </Badge>
+                </div>
+                {inspirations.length > 0 ? (
+                <InspirationGrid
+                  items={inspirations}
+                  selectedIds={selectedIds}
+                  feedback={feedback}
+                  exploring={exploring}
+                  onToggle={toggleSelection}
+                  onLike={(item) => openFeedback(item, "like")}
+                  onDislike={(item) => openFeedback(item, "dislike")}
+                  onExplore={(item) => openFeedback(item, "explore")}
+                  onEditFeedback={(item) =>
+                    openFeedback(
+                      item,
+                      feedback[item.videoId]?.rating === "dislike" ? "dislike" : "like"
+                    )
+                  }
+                />
+                ) : null}
+                {/* rejects hidden — re-enable when debugging filter */}
+                {/* <RejectedInspirationGrid
+                  items={rejectedInspirations}
+                  summary={filterSummary || undefined}
+                /> */}
+                {likedVideos.length > 0 ? (
+                  <div className="flex flex-wrap items-center gap-2 border-t border-[#efefef] pt-3">
+                    <p className="type-caption text-[var(--text-tertiary)]">
+                      {palettes.length > 0
+                        ? "Palettes ready — continue to Style or refresh for new options."
+                        : "Done selecting? Continue to Style — palettes suggest automatically."}
+                    </p>
+                    {palettes.length > 0 ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={suggestingPalettes}
+                        onClick={() => void suggestPalettes()}
+                      >
+                        {suggestingPalettes ? (
+                          <LoaderCircle className="size-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="size-3.5" />
+                        )}
+                        Refresh palettes
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
-              <div className="flex items-center gap-1.5">
+            )}
+
+            {!inspirations.length && !rejectedInspirations.length && !searching && (
+              <div className="space-y-4">
+                <p className="type-caption leading-snug text-[var(--text-tertiary)]">
+                  No refs yet. Research a topic, or skip to Generate.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    disabled={!topic.trim() || searching}
+                    onClick={() => void handleResearch()}
+                  >
+                    <Telescope className="size-4" />
+                    Run research
+                  </Button>
+                  <Button variant="ghost" onClick={() => setStudioTab("generate")}>
+                    Skip to Generate
+                    <ArrowRight className="size-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        }
+        stylePanel={
+          <div className="space-y-4">
+            <ChannelProfilePanel
+              channelInput={channelProfileInput}
+              topic={topic}
+              profile={channelProfile}
+              loading={analyzingChannel}
+              onChannelInputChange={setChannelProfileInput}
+              onAnalyze={() => void handleAnalyzeChannelProfile()}
+              onClear={() => {
+                setChannelProfile(null);
+                setChannelProfileInput("");
+              }}
+            />
+
+            <BrandLanguagePanel language={brandLanguage} onChange={setBrandLanguage} />
+
+            <section className="space-y-3 border-t border-[#efefef] pt-5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="type-ui text-[#171618]">Quality direction</h3>
+                  <p className="mt-1 type-caption text-[var(--text-tertiary)]">
+                    Master prompt for every generation
+                  </p>
+                </div>
                 <Button
                   type="button"
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
-                  className="h-8"
+                  onClick={() => setMasterPrompt(DEFAULT_MASTER_PROMPT)}
+                >
+                  Reset default
+                </Button>
+              </div>
+              <Textarea
+                id="master-prompt"
+                value={masterPrompt}
+                onChange={(e) => setMasterPrompt(e.target.value)}
+                rows={6}
+                className="min-h-[120px] resize-y type-ui font-normal leading-relaxed"
+                placeholder="Master quality prompt used for every generation…"
+              />
+            </section>
+
+            <section className="space-y-2 border-t border-[#efefef] pt-5">
+              <h3 className="type-ui text-[#171618]">Composition factors</h3>
+              <p className="type-caption text-[var(--text-tertiary)]">
+                Optional framing. Applied only when it fits the scene.
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {COMPOSITION_FACTORS.map((factor) => {
+                  const active = compositionFactors.includes(factor.id);
+                  return (
+                    <Button
+                      key={factor.id}
+                      type="button"
+                      size="sm"
+                      variant={active ? "default" : "outline"}
+                      title={factor.prompt}
+                      className="rounded-[var(--radius-buttons)]"
+                      onClick={() =>
+                        setCompositionFactors((prev) =>
+                          prev.includes(factor.id)
+                            ? prev.filter((id) => id !== factor.id)
+                            : [...prev, factor.id]
+                        )
+                      }
+                    >
+                      {factor.label}
+                    </Button>
+                  );
+                })}
+              </div>
+              {styleBrief?.summary ? (
+                <p className="type-caption text-[var(--text-tertiary)]">
+                  Research note: {styleBrief.summary}
+                </p>
+              ) : null}
+            </section>
+          </div>
+        }
+        generatePanel={
+          <div className="space-y-5">
+              <section className="space-y-3 rounded-[20px] border border-[#efefef] bg-[#f7f7f7] p-4">
+                <div>
+                  <p className="type-ui text-[#171618]">Generation context</p>
+                  <p className="mt-0.5 type-caption text-[#5c5e60]">
+                    What the model will use on the next run
+                  </p>
+                </div>
+                <p className="type-ui text-[#171618]">{generationContextSummary.headline}</p>
+                {generationContextSummary.items.length > 0 ? (
+                  <dl className="grid gap-2 sm:grid-cols-2">
+                    {generationContextSummary.items.map((item) => (
+                      <div key={item.label} className="min-w-0">
+                        <dt className="type-caption text-[#5c5e60]">{item.label}</dt>
+                        <dd className="type-ui font-normal text-[#171618] line-clamp-2">
+                          {item.value}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                ) : (
+                  <p className="type-caption text-[#5c5e60]">
+                    Add research, media, or a hook to strengthen context before generating.
+                  </p>
+                )}
+              </section>
+
+              <form
+                id="generate-form"
+                onSubmit={handleGenerate}
+                className="grid gap-3 sm:grid-cols-2"
+              >
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label htmlFor="hook">
+                    Hook{" "}
+                    <span className="font-normal text-[var(--text-tertiary)]">
+                      optional
+                    </span>
+                  </Label>
+                  <Input
+                    id="hook"
+                    placeholder="HOW IT'S MADE"
+                    value={hook}
+                    onChange={(e) => setHook(e.target.value)}
+                  />
+                </div>
+                <div className="min-w-0 space-y-1.5">
+                  <Label>Composition</Label>
+                  <Select value={composition} onValueChange={(v) => v && setComposition(v)}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {COMPOSITIONS.map((c) => (
+                        <SelectItem key={c.value} value={c.value}>
+                          {c.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="min-w-0 space-y-1.5">
+                  <Label>Resolution</Label>
+                  <Select value={imageSize} onValueChange={(v) => v && setImageSize(v)}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {IMAGE_SIZES.map((s) => (
+                        <SelectItem key={s.value} value={s.value}>
+                          {s.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="min-w-0 space-y-1.5 sm:col-span-2">
+                  <Label>Model</Label>
+                  <Select value={model} onValueChange={(v) => v && setModel(v)}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {MODELS.map((m) => (
+                        <SelectItem key={m.value} value={m.value}>
+                          {m.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </form>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 sm:col-span-2">
+                <Label>Active palette</Label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
                   disabled={suggestingPalettes || likedVideos.length === 0}
                   onClick={() => void suggestPalettes()}
                 >
                   {suggestingPalettes ? (
-                    <Loader2 className="size-3.5 animate-spin" />
+                    <LoaderCircle className="size-3.5 animate-spin" />
                   ) : (
                     <RefreshCw className="size-3.5" />
                   )}
                   Resuggest
                 </Button>
-                <Button
-                  type="submit"
-                  form="generate-form"
-                  size="sm"
-                  className="h-8"
-                  disabled={loading || !topic.trim()}
-                >
-                  {loading ? (
-                    <>
-                      <Loader2 className="size-3.5 animate-spin" />
-                      Generating…
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="size-3.5" />
-                      Generate
-                    </>
-                  )}
-                </Button>
               </div>
-            </div>
 
-            <form
-              id="generate-form"
-              onSubmit={handleGenerate}
-              className="grid gap-1.5 sm:grid-cols-4"
-            >
-              <div className="space-y-1 sm:col-span-1">
-                <Label htmlFor="hook" className="type-caption text-[#727578]">
-                  Hook
-                </Label>
-                <Input
-                  id="hook"
-                  className="h-8"
-                  placeholder='e.g. "HOW IT&apos;S MADE"'
-                  value={hook}
-                  onChange={(e) => setHook(e.target.value)}
-                />
-              </div>
-              <div className="min-w-0 space-y-1">
-                <Label className="type-caption text-[#727578]">Composition</Label>
-                <Select value={composition} onValueChange={(v) => v && setComposition(v)}>
-                  <SelectTrigger className="h-8 w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {COMPOSITIONS.map((c) => (
-                      <SelectItem key={c.value} value={c.value}>
-                        {c.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="min-w-0 space-y-1">
-                <Label className="type-caption text-[#727578]">Resolution</Label>
-                <Select value={imageSize} onValueChange={(v) => v && setImageSize(v)}>
-                  <SelectTrigger className="h-8 w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {IMAGE_SIZES.map((s) => (
-                      <SelectItem key={s.value} value={s.value}>
-                        {s.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="min-w-0 space-y-1">
-                <Label className="type-caption text-[#727578]">Model</Label>
-                <Select value={model} onValueChange={(v) => v && setModel(v)}>
-                  <SelectTrigger className="h-8 w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {MODELS.map((m) => (
-                      <SelectItem key={m.value} value={m.value}>
-                        {m.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </form>
-
-            {palettes.length > 0 ? (
-              <div className="space-y-1.5 border-t border-[#efefef] pt-2">
-                <div
-                  className="flex gap-1.5 overflow-x-auto pb-0.5"
-                  role="radiogroup"
-                  aria-label="Active palette"
-                >
-                  {palettes.map((p) => {
-                    const active = selectedPaletteId === p.id;
-                    return (
-                      <button
-                        key={p.id}
-                        type="button"
-                        role="radio"
-                        aria-checked={active}
-                        onClick={() => {
-                          setSelectedPaletteId(p.id);
-                          setStyleBrief((prev) => applyPaletteToBrief(prev, p) || prev);
-                        }}
-                        className={cn(
-                          "flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-1 transition-colors",
-                          active
-                            ? "border-[#171618] bg-[#171618] text-white"
-                            : "border-[#efefef] bg-white text-[#727578] hover:border-[#727578]"
-                        )}
-                      >
-                        <span className="flex gap-0.5">
-                          {p.colors.slice(0, 4).map((c, i) => (
-                            <span
-                              key={`${p.id}-chip-${i}`}
-                              className="size-2.5 rounded-full border border-white/40"
-                              style={{ background: c.startsWith("#") ? c : `#${c}` }}
-                            />
-                          ))}
-                        </span>
-                        <span className="type-caption font-medium">{p.name}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                {selectedPalette && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    {selectedPalette.colors.map((c, index) => (
-                      <ColorPicker
-                        key={`${selectedPalette.id}-${index}`}
-                        compact
-                        label={`Color ${index + 1}`}
-                        value={c.startsWith("#") ? c : `#${c}`}
-                        onChange={(hex) => {
-                          const next = {
-                            ...selectedPalette,
-                            colors: selectedPalette.colors.map((color, i) =>
-                              i === index ? hex : color
-                            ),
-                            name: /custom/i.test(selectedPalette.name)
-                              ? selectedPalette.name
-                              : `${selectedPalette.name} · custom`,
-                          };
-                          setPalettes((prev) =>
-                            prev.map((x) => (x.id === next.id ? next : x))
-                          );
-                          setStyleBrief((prev) => applyPaletteToBrief(prev, next) || prev);
-                        }}
-                      />
-                    ))}
-                    {selectedPalette.rationale && (
-                      <span className="min-w-0 flex-1 truncate type-caption text-[#727578]">
-                        {selectedPalette.rationale}
-                      </span>
-                    )}
+              {palettes.length > 0 ? (
+                <div className="space-y-3">
+                  <div
+                    className="flex flex-wrap gap-1.5"
+                    role="radiogroup"
+                    aria-label="Active palette"
+                  >
+                    {palettes.map((p) => {
+                      const active = selectedPaletteId === p.id;
+                      return (
+                        <Button
+                          key={p.id}
+                          type="button"
+                          size="sm"
+                          role="radio"
+                          aria-checked={active}
+                          variant={active ? "default" : "outline"}
+                          className="gap-1.5 rounded-[var(--radius-buttons)]"
+                          onClick={() => {
+                            setSelectedPaletteId(p.id);
+                            setStyleBrief((prev) => applyPaletteToBrief(prev, p) || prev);
+                          }}
+                        >
+                          <span className="flex gap-0.5">
+                            {p.colors.slice(0, 4).map((c, i) => (
+                              <span
+                                key={`${p.id}-chip-${i}`}
+                                className="size-2.5 rounded-full border border-white/40"
+                                style={{ background: c.startsWith("#") ? c : `#${c}` }}
+                              />
+                            ))}
+                          </span>
+                          {p.name}
+                        </Button>
+                      );
+                    })}
                   </div>
-                )}
-              </div>
-            ) : (
-              (selectedPalette || styleBrief?.colorPalette?.length) && (
-                <div className="flex flex-wrap items-center gap-2 border-t border-[#efefef] pt-2">
-                  <span className="type-caption text-[#727578]">
-                    {selectedPalette ? selectedPalette.name : "Palette"}
-                  </span>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {(selectedPalette?.colors || styleBrief?.colorPalette || []).map((c, index) => (
-                      <ColorPicker
-                        key={`${selectedPalette?.id || "brief"}-${index}`}
-                        compact
-                        label={`Color ${index + 1}`}
-                        value={c.startsWith("#") ? c : `#${c}`}
-                        onChange={(hex) => {
-                          if (selectedPalette) {
+                  {selectedPalette && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {selectedPalette.colors.map((c, index) => (
+                        <ColorPicker
+                          key={`${selectedPalette.id}-${index}`}
+                          compact
+                          label={`Color ${index + 1}`}
+                          value={c.startsWith("#") ? c : `#${c}`}
+                          onChange={(hex) => {
                             const next = {
                               ...selectedPalette,
                               colors: selectedPalette.colors.map((color, i) =>
@@ -2414,32 +2731,73 @@ export default function Home() {
                               prev.map((x) => (x.id === next.id ? next : x))
                             );
                             setStyleBrief((prev) => applyPaletteToBrief(prev, next) || prev);
-                            return;
-                          }
-                          if (styleBrief?.colorPalette?.length) {
-                            const colors = styleBrief.colorPalette.map((color, i) =>
-                              i === index ? hex : color
-                            );
-                            setStyleBrief({ ...styleBrief, colorPalette: colors });
-                          }
-                        }}
-                      />
-                    ))}
-                  </div>
+                          }}
+                        />
+                      ))}
+                      {selectedPalette.rationale && (
+                        <span className="min-w-0 flex-1 truncate type-caption text-muted-foreground">
+                          {selectedPalette.rationale}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
-              )
-            )}
+              ) : (
+                (selectedPalette || styleBrief?.colorPalette?.length) && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="type-caption text-muted-foreground">
+                      {selectedPalette ? selectedPalette.name : "Palette"}
+                    </span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {(selectedPalette?.colors || styleBrief?.colorPalette || []).map(
+                        (c, index) => (
+                          <ColorPicker
+                            key={`${selectedPalette?.id || "brief"}-${index}`}
+                            compact
+                            label={`Color ${index + 1}`}
+                            value={c.startsWith("#") ? c : `#${c}`}
+                            onChange={(hex) => {
+                              if (selectedPalette) {
+                                const next = {
+                                  ...selectedPalette,
+                                  colors: selectedPalette.colors.map((color, i) =>
+                                    i === index ? hex : color
+                                  ),
+                                  name: /custom/i.test(selectedPalette.name)
+                                    ? selectedPalette.name
+                                    : `${selectedPalette.name} · custom`,
+                                };
+                                setPalettes((prev) =>
+                                  prev.map((x) => (x.id === next.id ? next : x))
+                                );
+                                setStyleBrief(
+                                  (prev) => applyPaletteToBrief(prev, next) || prev
+                                );
+                                return;
+                              }
+                              if (styleBrief?.colorPalette?.length) {
+                                const colors = styleBrief.colorPalette.map((color, i) =>
+                                  i === index ? hex : color
+                                );
+                                setStyleBrief({ ...styleBrief, colorPalette: colors });
+                              }
+                            }}
+                          />
+                        )
+                      )}
+                    </div>
+                  </div>
+                )
+              )}
 
             {error && (
-              <p className="rounded-[8px] border border-[#efefef] bg-[#f7f7f7] px-3 py-2 type-caption text-[#727578]">
-                {error}
+              <p className="rounded-lg border border-border bg-muted/50 px-3 py-2 type-caption text-muted-foreground">
+              {error}
               </p>
             )}
-          </section>
-        </aside>
-
-        {/* Canvas — secondary column */}
-        <div className="min-h-0 min-w-0">
+          </div>
+        }
+        canvas={
           <GenerationCanvas
             canvasTab={canvasTab}
             onTabChange={setCanvasTab}
@@ -2475,11 +2833,13 @@ export default function Home() {
               setBackend("");
               setCanvasTab("preview");
             }}
+            onGenerateSimilar={(v) => void handleGenerateSimilar(v)}
+            generatingSimilarId={generatingSimilarId}
             paletteColors={selectedPalette?.colors || styleBrief?.colorPalette || []}
             paletteName={selectedPalette?.name}
           />
-        </div>
-      </div>
+        }
+      />
 
       <FeedbackDialog
         open={feedbackDialog.open}
@@ -2512,8 +2872,8 @@ export default function Home() {
         title="Finding similar"
         message={
           exploreLabel
-            ? `Using your feedback on “${exploreLabel}”…`
-            : "Searching similar premium refs…"
+            ? `Analyzing “${exploreLabel}” and searching similar refs…`
+            : "Searching similar refs…"
         }
       />
 
@@ -2521,11 +2881,15 @@ export default function Home() {
         open={loading}
         title="Generating combinations"
         message={
-          mediaIntelligence
-            ? "Using media context, measured colors, and selected thumbnail hook…"
-            : useOpeningFrames
-            ? "Using full-video stills + building variants…"
-            : "Building 3–4 variants from liked thumbs + selected palette…"
+          generatingSimilarId
+            ? "Generating variants inspired by your selected thumbnail…"
+            : mediaIntelligence
+              ? "Using media context, topic setting, and selected hook…"
+              : topicContext?.setting
+                ? `Grounding on "${topicContext.setting}" with liked refs and palette…`
+                : useOpeningFrames
+                  ? "Using full-video stills to build variants…"
+                  : "Building 3-4 variants from research context and palette…"
         }
       />
 
@@ -2534,6 +2898,6 @@ export default function Home() {
         title="Picking colors from likes"
         message="Reading liked thumbnail images to suggest palettes…"
       />
-    </div>
+    </>
   );
 }

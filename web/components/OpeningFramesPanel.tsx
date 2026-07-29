@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { Film, Link2, Loader2, Sparkles, Trash2 } from "lucide-react";
+import { Film, Link2, LoaderCircle, Sparkles, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type FrameCandidate = {
@@ -76,17 +76,20 @@ export function OpeningFramesPanel({
 
   return (
     <div className="space-y-2">
-      <label className="flex cursor-pointer items-start gap-2.5 rounded-[12px] border border-[#efefef] bg-white p-2.5">
+      <label className="flex cursor-pointer items-start gap-2.5 border-t border-[#efefef] pt-3">
         <Checkbox
           checked={useOpeningFrames}
           onCheckedChange={(v) => onUseOpeningFramesChange(v === true)}
           className="mt-0.5"
         />
         <span className="min-w-0">
-          <span className="block type-ui text-[#171618]">Use full-video stills</span>
-          <span className="mt-0.5 block type-caption text-[#727578]">
-            YouTube links use yt-dlp on Railway (full download + ffmpeg samples + best-frame pick).
-            No CDN thumbnail shortcuts.
+          <span className="block type-ui text-[#171618]">
+            Key moments from YouTube{" "}
+            <span className="font-normal text-[var(--text-tertiary)]">optional</span>
+          </span>
+          <span className="mt-0.5 block type-caption text-[#5c5e60]">
+            Paste a YouTube URL to sample key moments across the video (not just the first
+            seconds). Local uploads still work as optional stills.
           </span>
         </span>
       </label>
@@ -94,7 +97,7 @@ export function OpeningFramesPanel({
       {useOpeningFrames && (
         <div className="space-y-2 rounded-[12px] border border-dashed border-[#efefef] bg-[#f7f7f7] p-2.5">
           <div className="flex items-center justify-between gap-2">
-            <Label className="type-caption font-normal text-[#727578]">Source videos</Label>
+            <Label className="type-caption font-normal text-[#5c5e60]">Source videos</Label>
             <Button
               type="button"
               variant="outline"
@@ -143,7 +146,7 @@ export function OpeningFramesPanel({
               onClick={() => void handleYoutubeSubmit()}
             >
               {downloadingYt ? (
-                <Loader2 className="size-3 animate-spin" />
+                <LoaderCircle className="size-3 animate-spin" />
               ) : (
                 <Link2 className="size-3" />
               )}
@@ -152,8 +155,8 @@ export function OpeningFramesPanel({
           </div>
 
           {openingFrames.length === 0 ? (
-            <p className="type-caption text-[#727578]">
-              Add 1–2 sources: upload a video, or paste a YouTube link.
+            <p className="type-caption text-[#5c5e60]">
+              Add 1-2 sources: paste a YouTube link for key-moment stills, or upload a video.
             </p>
           ) : (
             <div className="space-y-2">
@@ -163,8 +166,8 @@ export function OpeningFramesPanel({
                     <div className="relative h-14 w-24 shrink-0 overflow-hidden rounded-[6px] border border-[#efefef]">
                       {clip.status === "extracting" || clip.status === "uploading" ? (
                         <div className="flex h-full w-full flex-col items-center justify-center gap-1 bg-[#f7f7f7]">
-                          <Loader2 className="size-3.5 animate-spin text-[#727578]" />
-                          <span className="type-caption text-[9px] text-[#727578]">
+                          <LoaderCircle className="size-3.5 animate-spin text-[#5c5e60]" />
+                          <span className="type-caption text-[9px] text-[#5c5e60]">
                             {clip.status === "uploading" ? "Storing…" : "Sampling…"}
                           </span>
                         </div>
@@ -179,10 +182,10 @@ export function OpeningFramesPanel({
                     <div className="min-w-0 flex-1">
                       <p className="truncate type-caption font-medium text-[#171618]">{clip.name}</p>
                       {(clip.status === "uploading" || clip.status === "extracting") && clip.label && (
-                        <p className="mt-0.5 truncate type-caption text-[#727578]">{clip.label}</p>
+                        <p className="mt-0.5 truncate type-caption text-[#5c5e60]">{clip.label}</p>
                       )}
                       {clip.status === "ready" && clip.timestampSec != null && (
-                        <p className="mt-0.5 type-caption text-[#727578]">
+                        <p className="mt-0.5 type-caption text-[#5c5e60]">
                           @{clip.timestampSec}s
                           {clip.durationSec ? ` / ${Math.round(clip.durationSec)}s` : ""}
                           {clip.frameCount ? ` · ${clip.frameCount} samples` : ""}
@@ -199,7 +202,7 @@ export function OpeningFramesPanel({
                         </p>
                       )}
                       {clip.geminiReason && clip.status === "ready" && (
-                        <p className="mt-0.5 line-clamp-2 type-caption text-[#727578]">
+                        <p className="mt-0.5 line-clamp-2 type-caption text-[#5c5e60]">
                           {clip.geminiReason}
                         </p>
                       )}
@@ -208,6 +211,7 @@ export function OpeningFramesPanel({
                       type="button"
                       variant="ghost"
                       size="icon-xs"
+                      aria-label="Remove clip"
                       onClick={() => onRemove(clip.id)}
                       disabled={clip.status === "extracting" || clip.status === "uploading"}
                     >
@@ -217,7 +221,7 @@ export function OpeningFramesPanel({
 
                   {clip.status === "ready" && clip.candidates && clip.candidates.length > 1 && (
                     <div className="mt-2 space-y-1 border-t border-[#f0f0f0] pt-2">
-                      <p className="type-caption text-[#727578]">Pick frame (full video)</p>
+                      <p className="type-caption text-[#5c5e60]">Pick key moment</p>
                       <div className="flex gap-1 overflow-x-auto pb-0.5">
                         {clip.candidates.map((c) => {
                           const active = clip.timestampSec === c.timestampSec;

@@ -4,19 +4,30 @@ import { fetchChannelPublicVideos } from "@/lib/channel-videos";
 import { buildExpandedSearchQueries } from "@/lib/search-queries";
 import { filterOutShortsDeep, isYouTubeShort } from "@/lib/shorts-filter";
 import {
+  filterByTopicRelevance,
   parseChannelHandles,
+  rankByTopicThenViews,
+  scoreTopicMatch,
   videoFromChannelFetch,
   videoFromReferenceChannel,
 } from "@/lib/title-relevance";
 
 const BASE_API_URL = "https://www.youtube.com/youtubei/v1/search";
-const CLIENT_VERSION = "2.20240606.06.00";
+const CLIENT_VERSION = "2.20250313.01.00";
 const SEARCH_TIMEOUT_MS = 30_000;
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 
+/**
+ * YouTube India + Relevance (default Prioritise filter).
+ * sp=CAA%253D → Relevance; gl=IN → India results.
+ * @see YouTube search filter URL params
+ */
+const YT_INDIA_RELEVANCE_SP = "CAA%253D";
+const YT_INDIA_COOKIE = "PREF=gl=IN&hl=en; SOCS=CAI";
+
 /** Candidate pool passed to Gemini quality filter. */
-export const SEARCH_POOL_SIZE = 25;
+export const SEARCH_POOL_SIZE = 40;
 const MIN_POOL_BEFORE_GEMINI = 8;
 
 type YtsrContext = {
@@ -48,6 +59,7 @@ type ParsedVideo = {
 function buildContext(): YtsrContext {
   return {
     client: {
+      // India locale — matches youtube.com/IN relevance ranking.
       utcOffsetMinutes: 330,
       gl: "IN",
       hl: "en",
@@ -226,23 +238,30 @@ function parseWrapper(primaryContents: Record<string, unknown>): {
     | { contents?: Record<string, unknown>[] }
     | undefined;
   if (sectionList?.contents) {
-    const itemSection = sectionList.contents.find((x) => "itemSectionRenderer" in x) as
-      | { itemSectionRenderer?: { contents?: Record<string, unknown>[] } }
-      | undefined;
-    rawItems = itemSection?.itemSectionRenderer?.contents || [];
-    const cont = sectionList.contents.find((x) => "continuationItemRenderer" in x) as
-      | {
+    // Collect EVERY itemSection — YouTube often splits results across sections.
+    for (const block of sectionList.contents) {
+      if ("itemSectionRenderer" in block) {
+        const section = block as {
+          itemSectionRenderer?: { contents?: Record<string, unknown>[] };
+        };
+        rawItems.push(...(section.itemSectionRenderer?.contents || []));
+      }
+      if ("continuationItemRenderer" in block) {
+        const cont = block as {
           continuationItemRenderer?: {
             continuationEndpoint?: { continuationCommand?: { token?: string } };
           };
-        }
-      | undefined;
-    continuationToken =
-      cont?.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token || null;
+        };
+        continuationToken =
+          cont.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token ||
+          continuationToken;
+      }
+    }
   }
 
   const richGrid = primaryContents.richGridRenderer as { contents?: Record<string, unknown>[] } | undefined;
-  if (richGrid?.contents) {
+  // Prefer sectionList (classic search). Only use richGrid when sectionList had nothing.
+  if (richGrid?.contents && rawItems.length === 0) {
     rawItems = richGrid.contents
       .filter((x) => !("continuationItemRenderer" in x))
       .map((x) => {
@@ -301,7 +320,8 @@ async function postSearch(body: Record<string, unknown>): Promise<Record<string,
     headers: {
       "Content-Type": "application/json",
       "User-Agent": USER_AGENT,
-      Cookie: "SOCS=CAI",
+      "Accept-Language": "en-IN,en;q=0.9",
+      Cookie: YT_INDIA_COOKIE,
     },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
@@ -312,6 +332,7 @@ async function postSearch(body: Record<string, unknown>): Promise<Record<string,
 
 async function fetchSearchPage(query: string, limit: number): Promise<ParsedVideo[]> {
   const context = buildContext();
+  // Empty/default params = Relevance prioritise (YouTube default).
   const json = await postSearch({ context, query });
   const contents = json.contents as {
     twoColumnSearchResultsRenderer?: {
@@ -378,15 +399,18 @@ function toScrapedVideo(video: ParsedVideo): ScrapedVideo {
   };
 }
 
-function dedupeSort(videos: ScrapedVideo[]): ScrapedVideo[] {
+function dedupeVideos(videos: ScrapedVideo[]): ScrapedVideo[] {
   const seen = new Set<string>();
-  return videos
-    .filter((v) => {
-      if (seen.has(v.videoId)) return false;
-      seen.add(v.videoId);
-      return true;
-    })
-    .sort((a, b) => b.viewCount - a.viewCount);
+  return videos.filter((v) => {
+    if (seen.has(v.videoId)) return false;
+    seen.add(v.videoId);
+    return true;
+  });
+}
+
+function dedupeSort(videos: ScrapedVideo[], topic?: string): ScrapedVideo[] {
+  const unique = dedupeVideos(videos);
+  return topic ? rankByTopicThenViews(topic, unique) : unique.sort((a, b) => b.viewCount - a.viewCount);
 }
 
 function matchesChannelScope(
@@ -410,12 +434,119 @@ function matchesChannelScope(
 
 async function searchQuery(query: string, perQueryLimit: number): Promise<ScrapedVideo[]> {
   try {
+    // Prefer HTML (IN + Relevance) — closer to youtube.com UI than anonymous InnerTube.
+    try {
+      const htmlHits = await fetchSearchViaYoutubeHtml(query, perQueryLimit);
+      if (htmlHits.length) return htmlHits;
+    } catch {
+      /* fall through to InnerTube */
+    }
     const parsed = await fetchSearchPage(query, perQueryLimit);
+    // Preserve YouTube result order — only drop Shorts / live / upcoming.
     return parsed.filter(isLandscapeCandidate).map(toScrapedVideo);
   } catch (err) {
     console.error(`ytsr "${query}" failed:`, err instanceof Error ? err.message : err);
     return [];
   }
+}
+
+/**
+ * Parse youtube.com/results HTML (ytInitialData) — India + Relevance.
+ * Closer to the public UI ranking than anonymous InnerTube alone.
+ */
+async function fetchSearchViaYoutubeHtml(query: string, limit: number): Promise<ScrapedVideo[]> {
+  // India + explicit Relevance (Prioritise → Relevance).
+  const htmlUrl =
+    `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}` +
+    `&sp=${YT_INDIA_RELEVANCE_SP}&gl=IN&hl=en`;
+
+  const html = await fetch(htmlUrl, {
+    headers: {
+      "User-Agent": USER_AGENT,
+      "Accept-Language": "en-IN,hi-IN,en;q=0.8",
+      Cookie: YT_INDIA_COOKIE,
+    },
+    signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
+  }).then((r) => {
+    if (!r.ok) throw new Error(`youtube html search ${r.status}`);
+    return r.text();
+  });
+
+  const match =
+    html.match(/var ytInitialData = (\{[\s\S]+?\});<\/script>/) ||
+    html.match(/ytInitialData"\] = (\{[\s\S]+?\});<\/script>/);
+  if (!match?.[1]) throw new Error("ytInitialData missing");
+
+  const data = JSON.parse(match[1]) as Record<string, unknown>;
+  const primary = (
+    data.contents as {
+      twoColumnSearchResultsRenderer?: { primaryContents?: Record<string, unknown> };
+    }
+  )?.twoColumnSearchResultsRenderer?.primaryContents;
+  if (!primary) throw new Error("search primaryContents missing");
+
+  const { rawItems } = parseWrapper(primary);
+  const collected: ScrapedVideo[] = [];
+  const seen = new Set<string>();
+
+  for (const item of rawItems) {
+    if (collected.length >= limit) break;
+    const parsed = parseItem(item);
+    if (!parsed) continue;
+    if (seen.has(parsed.videoId)) continue;
+    if (!isLandscapeCandidate(parsed)) continue;
+    seen.add(parsed.videoId);
+    collected.push(toScrapedVideo(parsed));
+  }
+
+  console.log(
+    `[youtube-html] query=${JSON.stringify(query)} gl=IN relevance kept=${collected.length}`
+  );
+  return collected;
+}
+
+/**
+ * Exact YouTube search: sends the user text as-is, returns hits in YouTube UI order.
+ * Prefers youtube.com HTML ranking (matches what users see); falls back to InnerTube.
+ */
+export async function searchYouTubeExact(
+  query: string,
+  options?: { target?: number }
+): Promise<{ videos: ScrapedVideo[]; query: string; source: "youtube-html" | "innertube" }> {
+  const q = query.trim();
+  if (!q) return { videos: [], query: q, source: "youtube-html" };
+
+  const target = options?.target ?? 8;
+  const fetchLimit = Math.max(target * 4, 32);
+
+  try {
+    const videos = await fetchSearchViaYoutubeHtml(q, fetchLimit);
+    if (videos.length >= Math.min(target, 4)) {
+      console.log(
+        `[youtube-exact] source=html query=${JSON.stringify(q)} returned=${videos.length}`
+      );
+      return {
+        videos: videos.slice(0, Math.max(target, 16)),
+        query: q,
+        source: "youtube-html",
+      };
+    }
+  } catch (err) {
+    console.warn(
+      `[youtube-exact] html failed, falling back to innertube:`,
+      err instanceof Error ? err.message : err
+    );
+  }
+
+  const videos = await searchQuery(q, fetchLimit);
+  console.log(
+    `[youtube-exact] source=innertube query=${JSON.stringify(q)} returned=${videos.length}`
+  );
+  return {
+    videos: videos.slice(0, Math.max(target, 16)),
+    query: q,
+    source: "innertube",
+  };
 }
 
 async function applyLandscapeFilter(
@@ -464,7 +595,53 @@ async function supplementWithApify(
     seen.add(video.videoId);
     merged.push(video);
   }
-  return dedupeSort(merged);
+  return dedupeSort(merged, topic);
+}
+
+/**
+ * Run exact YouTube search strings without re-expanding them.
+ * Used by /api/similar so each curated query is not polluted by factory templates.
+ */
+export async function searchYouTubeQueries(
+  queries: string[],
+  options?: { channels?: string; target?: number; topic?: string }
+): Promise<ScrapedVideo[]> {
+  const topic = (options?.topic || queries[0] || "").trim();
+  const target = options?.target ?? SEARCH_POOL_SIZE;
+  const channelsRaw = options?.channels?.trim() || "";
+  const channelVideoIds = new Set<string>();
+  let videos: ScrapedVideo[] = [];
+
+  if (channelsRaw) {
+    const channelVideos = await fetchChannelPublicVideos(channelsRaw, { limit: target });
+    for (const video of channelVideos) channelVideoIds.add(video.videoId);
+    videos = dedupeSort(channelVideos, topic);
+  }
+
+  const uniqueQueries = [...new Set(queries.map((q) => q.trim()).filter(Boolean))].slice(0, 8);
+  if (!uniqueQueries.length) return videos.slice(0, target);
+
+  const perQueryLimit = Math.ceil(target / Math.max(uniqueQueries.length, 1)) + 12;
+  const batches = await Promise.all(
+    uniqueQueries.map((q, i) =>
+      // First query (usually raw topic) gets a larger slice — YT relevance lives there.
+      searchQuery(q, i === 0 ? perQueryLimit + 20 : perQueryLimit)
+    )
+  );
+
+  const seen = new Set(videos.map((v) => v.videoId));
+  for (const batch of batches) {
+    for (const video of batch) {
+      if (seen.has(video.videoId)) continue;
+      if (!matchesChannelScope(video, channelsRaw, channelVideoIds)) continue;
+      seen.add(video.videoId);
+      videos.push(video);
+    }
+  }
+
+  videos = filterByTopicRelevance(topic, dedupeSort(videos, topic));
+  videos = await applyLandscapeFilter(videos, target);
+  return videos.slice(0, target);
 }
 
 /**
@@ -473,7 +650,13 @@ async function supplementWithApify(
  */
 export async function searchLongFormViaYtsr(
   topic: string,
-  options?: { channels?: string; target?: number; hook?: string }
+  options?: {
+    channels?: string;
+    target?: number;
+    hook?: string;
+    /** Pre-built queries — skips buildExpandedSearchQueries when provided. */
+    queries?: string[];
+  }
 ): Promise<ScrapedVideo[]> {
   const target = options?.target ?? SEARCH_POOL_SIZE;
   const channelsRaw = options?.channels?.trim() || "";
@@ -487,12 +670,28 @@ export async function searchLongFormViaYtsr(
     for (const video of channelVideos) {
       channelVideoIds.add(video.videoId);
     }
-    videos = dedupeSort(channelVideos);
+    videos = dedupeSort(channelVideos, topic);
   }
 
-  const queries = buildExpandedSearchQueries(topic, options?.hook).slice(0, 5);
-  const perQueryLimit = Math.ceil(target / Math.max(queries.length, 1)) + 15;
-  const batches = await Promise.all(queries.map((q) => searchQuery(q, perQueryLimit)));
+  const queries = (
+    options?.queries?.length
+      ? options.queries
+      : buildExpandedSearchQueries(topic, options?.hook)
+  )
+    .map((q) => q.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+
+  // Weight the raw topic query: fetch more from it than from expansions.
+  const primary = queries[0] || topic.trim();
+  const expansions = queries.filter((q) => q.toLowerCase() !== primary.toLowerCase());
+  const primaryLimit = Math.ceil(target * 0.7) + 20;
+  const expansionLimit = Math.ceil(target / Math.max(expansions.length, 1)) + 10;
+
+  const batches = await Promise.all([
+    searchQuery(primary, primaryLimit),
+    ...expansions.map((q) => searchQuery(q, expansionLimit)),
+  ]);
 
   const seen = new Set(videos.map((v) => v.videoId));
   for (const batch of batches) {
@@ -503,37 +702,37 @@ export async function searchLongFormViaYtsr(
       videos.push(video);
     }
   }
-  videos = dedupeSort(videos);
+  videos = dedupeSort(videos, topic);
 
-  const fallbackQueries = [
-    `${topic} documentary`,
-    `${topic} explained`,
-    `${topic} full video`,
-    `${topic} investigation`,
-  ];
-  for (const query of fallbackQueries) {
-    if (videos.length >= target) break;
-    const extra = await searchQuery(query, perQueryLimit + 10);
-    const extraSeen = new Set(videos.map((v) => v.videoId));
-    for (const video of extra) {
-      if (extraSeen.has(video.videoId)) continue;
-      if (!matchesChannelScope(video, channelsRaw, channelVideoIds)) continue;
-      extraSeen.add(video.videoId);
-      videos.push(video);
+  // Only soft-expand with topic-faithful fallbacks when the pool is thin.
+  if (videos.filter((v) => scoreTopicMatch(topic, v) >= 0.34).length < MIN_POOL_BEFORE_GEMINI) {
+    const fallbackQueries = [`${topic} explained`, `${topic} full`, `${topic} highlights`];
+    for (const query of fallbackQueries) {
+      if (videos.length >= target) break;
+      const extra = await searchQuery(query, expansionLimit + 10);
+      const extraSeen = new Set(videos.map((v) => v.videoId));
+      for (const video of extra) {
+        if (extraSeen.has(video.videoId)) continue;
+        if (!matchesChannelScope(video, channelsRaw, channelVideoIds)) continue;
+        extraSeen.add(video.videoId);
+        videos.push(video);
+      }
+      videos = dedupeSort(videos, topic);
     }
-    videos = dedupeSort(videos);
   }
 
   if (videos.length < MIN_POOL_BEFORE_GEMINI) {
     videos = await supplementWithApify(topic, channelsRaw || undefined, videos, channelVideoIds);
   }
 
+  videos = filterByTopicRelevance(topic, videos);
   videos = await applyLandscapeFilter(videos, target);
 
   if (videos.length < MIN_POOL_BEFORE_GEMINI && !handles.length) {
     videos = await supplementWithApify(topic, undefined, videos, channelVideoIds);
+    videos = filterByTopicRelevance(topic, videos);
     videos = await applyLandscapeFilter(videos, target);
   }
 
-  return videos.slice(0, target);
+  return dedupeSort(videos, topic).slice(0, target);
 }

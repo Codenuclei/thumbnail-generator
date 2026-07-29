@@ -5,60 +5,64 @@ import type { BrandLanguage } from "@/lib/brand-language";
 import { brandLanguagePromptBlock } from "@/lib/brand-language";
 import type { ChannelProfile } from "@/lib/channel-profile";
 import { channelProfilePromptBlock } from "@/lib/channel-profile";
+import type { TopicContext } from "@/lib/gemini-filter";
 import {
-  COMPOSITION_FACTORS_PROMPT_BLOCK,
-  compositionFactorsPrompt,
+  buildGenerationContextBlock,
+  type GenerationContextInput,
+} from "@/lib/generation-context";
+import {
+  compositionFactorVariantPrompt,
 } from "@/lib/composition-factors";
 
-/** Rotating camera / film looks — one per variant so generations don't share the same filter. */
+/** Rotating camera looks — varied lenses/angles without warm yellow color casts. */
 export const CAMERA_FILTERS = [
   {
-    id: "portra-35",
-    label: "Portra 35mm",
+    id: "daylight-35",
+    label: "Neutral daylight 35mm",
     prompt:
-      "Camera: Canon EOS R5, 35mm f/2. Lens character of Kodak Portra 400 — warm skin, soft contrast, minor film grain. Natural window lighting, shallow depth of field.",
+      "Camera: Canon EOS R5, 35mm f/2. Neutral daylight white balance (~5600K) — clean whites, accurate skin, soft contrast, mild grain. Even window/skylight, shallow DOF. NO warm amber/yellow cast, NO golden-hour orange wash, NO tungsten glow.",
   },
   {
-    id: "tri-x-flash",
-    label: "Tri-X flash",
+    id: "flash-reportage",
+    label: "Clean flash reportage",
     prompt:
-      "Camera: Leica M6 feel, 28mm, harsh direct on-camera flash like documentary reportage. Kodak Tri-X 400 grain, high contrast blacks, slight motion blur on secondary action.",
+      "Camera: 28mm reportage, direct on-camera flash, high contrast blacks, slight motion on secondary action. Flash is white/neutral — not yellow. No color cast, no orange rim light.",
   },
   {
-    id: "fuji-golden",
-    label: "Fuji golden hour",
+    id: "cool-factory",
+    label: "Cool industrial",
     prompt:
-      "Camera: Fujifilm X-T5, 50mm f/1.8. Fuji Superia / classic chrome response. Golden hour side light, long soft shadows, slight optical softness at edges.",
+      "Camera: Fujifilm X-T5, 50mm f/1.8. Cool-neutral industrial light (daylight LEDs / overcast windows). Crisp edges, soft background. Prefer blue-gray or white practicals — NEVER amber factory sodium glow or yellow haze.",
   },
   {
-    id: "cinestill-night",
-    label: "CineStill tungsten",
+    id: "studio-clean",
+    label: "Clean studio plate",
     prompt:
-      "Camera: Sony A7IV, 40mm. CineStill 800T look — tungsten practicals, mild halation on bright lights, cool shadows, visible grain, imperfect real texture.",
+      "Camera: Sony A7IV, 40mm. Softbox / overhead daylight LED look — even exposure, accurate neutrals, slight grain. No halation, no lens flare blobs, no warm practical spill.",
   },
   {
-    id: "ektar-day",
-    label: "Ektar daylight",
+    id: "hard-daylight",
+    label: "Hard daylight",
     prompt:
-      "Camera: Nikon Z6 II, 24mm. Kodak Ektar 100 — saturated but photographic color, hard midday sun or open shade, crisp edges without CGI sharpness.",
+      "Camera: Nikon Z6 II, 24mm. Hard midday or open-shade daylight — saturated but photographic color, crisp edges. White balance locked neutral. No sunset/golden gel, no yellow fog.",
   },
   {
-    id: "hp5-overcast",
-    label: "HP5 overcast",
+    id: "overcast-muted",
+    label: "Overcast muted",
     prompt:
-      "Camera: Contax G2 feel, 45mm. Ilford HP5 Plus mood translated to color — flat overcast sky, muted palette, soft contrast, documentary candid framing.",
+      "Camera: 45mm, flat overcast sky, muted but color-accurate palette, soft contrast, documentary candid framing. Cool-neutral grade — not sepia, not amber.",
   },
   {
-    id: "disposable-flash",
-    label: "Disposable flash",
+    id: "cleanroom-white",
+    label: "Cleanroom white",
     prompt:
-      "Camera: cheap disposable / point-and-shoot flash look — direct flash, slight color cast, soft focus, imperfect exposure, candid street-photography energy.",
+      "Camera: 35mm eye-level. Bright fluorescent/LED cleanroom or warehouse — whites stay white, metals stay silver/steel. Zero yellow sodium vapor look, zero orange fill.",
   },
   {
-    id: "anamorphic-doc",
-    label: "Doc anamorphic",
+    id: "doc-handheld",
+    label: "Doc handheld",
     prompt:
-      "Camera: handheld documentary, 35mm with mild anamorphic flare only when lights hit the lens. Eye-level or slight low angle, natural practical hangar/factory light, real grit.",
+      "Camera: handheld documentary, 35mm, eye-level or slight low angle. Natural location light corrected to neutral WB. Real grit OK; ban amber glows, lens flares, and cinematic orange-teal grading.",
   },
 ] as const;
 
@@ -68,19 +72,69 @@ export function cameraFilterForIndex(index: number): CameraFilter {
   return CAMERA_FILTERS[index % CAMERA_FILTERS.length];
 }
 
+/**
+ * Distinct hook-type treatments per variant so outputs don't share the same font look.
+ * Always grounded in bold YouTube display energy; vary weight, case, outline, placement.
+ */
+export const TYPOGRAPHY_VARIANTS = [
+  {
+    id: "impact-stroke",
+    label: "Impact heavy stroke",
+    prompt:
+      "TYPE VARIANT — Impact / Arial Black energy, ALL CAPS, ultra-thick black outline + slight white kick, 2–4 words, bottom-left or lower third negative space. Clean single glyphs — no letter collisions, no ghosted second layer.",
+  },
+  {
+    id: "bebas-stack",
+    label: "Bebas clean stack",
+    prompt:
+      "TYPE VARIANT — Bebas Neue / condensed sans, normal tracking (letters must not touch), Title Case or ALL CAPS, stacked 2 lines max, soft drop shadow (no thick comic outline), top-right or upper third.",
+  },
+  {
+    id: "anton-banner",
+    label: "Anton banner",
+    prompt:
+      "TYPE VARIANT — Anton / Montserrat Black feel, wide ALL CAPS banner across mid-frame, high-contrast fill (light on dark plate or dark on light), thin hard stroke only. Even letter spacing; never squash or double-print the word.",
+  },
+  {
+    id: "compact-corner",
+    label: "Compact corner punch",
+    prompt:
+      "TYPE VARIANT — Condensed display sans (not ultra-crammed), 2–3 words, corner punch (top-left), bold fill with colored outline sampled from the palette — phone-readable, never thin, never overlapping letters.",
+  },
+  {
+    id: "editorial-caps",
+    label: "Editorial caps",
+    prompt:
+      "TYPE VARIANT — Clean bold condensed caps like premium documentary thumbs — medium-thick outline, comfortable letter spacing with clear air between glyphs, placed opposite the face/product.",
+  },
+  {
+    id: "stacked-power",
+    label: "Stacked power words",
+    prompt:
+      "TYPE VARIANT — Two stacked power words (Impact energy), bottom-heavy placement, solid fill + heavy outline, each line a different visual weight (top slightly smaller). One clean render per line — no echo/ghost duplicates.",
+  },
+] as const;
+
+export type TypographyVariant = (typeof TYPOGRAPHY_VARIANTS)[number];
+
+export function typographyVariantForIndex(index: number): TypographyVariant {
+  return TYPOGRAPHY_VARIANTS[index % TYPOGRAPHY_VARIANTS.length];
+}
+
 /** Editable quality / anti-slop master prompt shown in the UI. */
 export const DEFAULT_MASTER_PROMPT = [
-  "YouTube thumbnail, 16:9 landscape. No watermark.",
-  "Shot like a real camera: prefer lens, film stock, and lighting language over AI quality bait words.",
-  "Camera specifics: Shot on 35mm lens, Canon EOS R5, or Kodak Portra 400 film.",
-  "Lighting: Natural window lighting, golden hour, or harsh direct flash — pick one coherent source.",
-  "Composition: Candid street / documentary photography, shot from a low or eye-level angle, shallow depth of field where it helps.",
-  "Imperfections: minor film grain, slight motion blur on secondary action, imperfect skin/fabric/metal texture.",
-  "HOOK VISUAL: The thumbnail should read like the video's opening shot (first 1–2 seconds) — show what the viewer sees first, not a random mid-video still.",
-  COMPOSITION_FACTORS_PROMPT_BLOCK,
-  "ANTI-AI-SLOP (strict): Do NOT use or imply hyperrealistic, 8k, 4k ultra, unreal engine, octane render, ray tracing, masterpiece, best quality, highly detailed, ultra sharp, perfect symmetry, glowing neon HUD, holographic UI, plastic skin, over-smoothed surfaces, cinematic god-rays overload, or video-game concept art.",
-  "Reference images are style DNA for layout, palette, and typography — match their real-photo energy, not synthetic polish.",
-  "Professional but real: no clutter, one dominant hook, phone-readable text, zero cheap clickbait, zero AI-slop sheen.",
+  "YouTube thumbnail, 16:9 landscape (1280×720 intent). No watermark, no channel logo unless supplied.",
+  "QUALITY BAR: Compete with top YouTube thumbnails — one dominant focal point, extreme phone-readability at ~120px wide, high subject/background separation, intentional contrast.",
+  "TYPOGRAPHY (critical): Study hook lettering on any attached reference thumbs (weight, case, outline, placement). Then render THIS variant's distinct type treatment — bold condensed display sans (Impact / Arial Black / Bebas Neue / Montserrat Black / Anton energy). ALL CAPS or Title Case for 2–5 words max. Thick dark outline or soft drop shadow. Never thin, script, serif body, or tiny paragraphs. Variants must NOT share the same type look.",
+  "TEXT INTEGRITY (hard ban — reject messy type): Render the hook EXACTLY once as clean, sharp glyphs. FORBIDDEN: overlapping/colliding letters, mashed tracking, double-printed or ghosted/echo layers of the same word, smeared or melted strokes, stray fragments floating above glyphs, duplicated letter endings (e.g. AMAZONON), misspellings, extra characters, warped or stacked outlines that look like a glitch. Keep clear air between every letter so each glyph is fully legible at phone size. Prefer comfortable tracking over ultra-tight. One outline + one fill only — never a second offset copy of the word.",
+  "TEXT PLACEMENT: Hook text in the clearest negative space; never cover faces/eyes or the product's readable silhouette. One line preferred; two lines max.",
+  "CAMERA: Real-lens language (35–50mm equivalent, shallow DOF when it helps). Prefer photographic light over CGI. Mild grain OK; no plastic skin, no neon HUD, no Unreal/Octane look.",
+  "WHITE BALANCE (critical): Neutral daylight / cool-LED lighting only. Whites must stay white; metals silver/steel. FORBIDDEN: odd yellow/amber/orange glow, golden-hour wash, tungsten spill, sodium-vapor haze, sepia cast, orange rim lights, cinematic orange-teal grade, lens-flare blobs.",
+  "COMPOSITION: One story beat. Face or hero object large. Environment supports topic — do not clutter with unrelated props. Apply classic framing factors ONLY when they fit the scene; never force them.",
+  "COLOR: Punchy but intentional — 2–4 dominant colors, strong subject vs background contrast. Avoid muddy mid-grays, random neon rainbows, and forcing measured swatches when they hurt readability.",
+  "USER MEDIA RULE: If photos/frames are attached, intelligently choose ONE primary contribution — a person likeness, a product/object, OR a background/plate — whichever best serves the topic and hook. Do NOT paste the entire source frame as the thumbnail unless it already is a strong thumb. Do NOT invent faces/products that contradict supplied media.",
+  "ANTI-AI-SLOP: No hyperrealistic/8k/masterpiece bait, no glowing sci-fi UI, no perfect symmetry, no stock-photo smiles, no unrelated celebrity faces, no mystery yellow glow on factories/cleanrooms.",
+  "Professional click energy: curiosity + clarity, zero cheap spam, zero illegible text.",
 ].join("\n");
 
 const COMPOSITION_MAP: Record<string, string> = {
@@ -106,13 +160,20 @@ export function buildUltraPrompt(
     iterationIndex?: number;
     /** Index into CAMERA_FILTERS — varies look across variants */
     cameraFilterIndex?: number;
+    /** Index into TYPOGRAPHY_VARIANTS — distinct type look per variant */
+    typographyVariantIndex?: number;
     /** User-editable quality direction (defaults to DEFAULT_MASTER_PROMPT) */
     masterPrompt?: string;
-    /** Selected composition factor ids (rule of thirds, diagonal, etc.) */
+    /**
+     * Selected composition factor ids (rule of thirds, diagonal, etc.).
+     * Treated as a case-aware menu — never force-applied.
+     */
     compositionFactors?: string[];
-    /** When true, attached refs include opening-shot frames from first 1–2s */
+    /** Preferred factor for this variant — use only if the scene fits */
+    compositionFactorHint?: string;
+    /** When true, attached refs include selected key-moment / video stills */
     useOpeningFrames?: boolean;
-    /** Video upload provided — primary frame drives subject; refs are style-only */
+    /** Video still provided — primary frame drives subject; refs are style-only */
     primaryVideoFrame?: boolean;
     /** Structured analysis grounded in supplied script, photos, frames, and YouTube context. */
     mediaIntelligence?: GenerationMediaIntelligence;
@@ -124,21 +185,63 @@ export function buildUltraPrompt(
     brandLanguage?: BrandLanguage;
     /** Evidence-backed main channel visual language. */
     channelProfile?: ChannelProfile;
+    /** Venue/domain grounding from research filter. */
+    topicContext?: TopicContext;
+    /** Active palette for context assembly. */
+    selectedPalette?: GenerationContextInput["selectedPalette"];
+    /** Count of user-selected research refs. */
+    selectedRefCount?: number;
+    /** Note when regenerating from a generated variant seed image. */
+    seedVariantNote?: string;
+    seedVariantLabel?: string;
   }
 ): string {
-  const hook = (options.hook || options.styleBrief?.suggestedHook || "").toUpperCase();
+  // Form hook is the only source of truth — never fall back to styleBrief.suggestedHook
+  // (that re-injects stale text after the user clears the Hook field).
+  const hook = (options.hook || "").trim().toUpperCase();
   const filter = cameraFilterForIndex(options.cameraFilterIndex ?? 0);
+  const typeVariant = typographyVariantForIndex(options.typographyVariantIndex ?? 0);
   const quality =
     (options.masterPrompt || "").trim() || DEFAULT_MASTER_PROMPT;
 
+  const contextBlock = buildGenerationContextBlock({
+    topic,
+    hook: options.hook,
+    topicContext: options.topicContext,
+    styleBrief: options.styleBrief,
+    selectedPalette: options.selectedPalette,
+    mediaIntelligence: options.mediaIntelligence,
+    brandLanguage: options.brandLanguage,
+    channelProfile: options.channelProfile,
+    userBrief: options.userBrief,
+    feedback: options.feedback,
+    selectedRefCount: options.selectedRefCount,
+    useOpeningFrames: options.useOpeningFrames,
+    userMediaPhotoCount: options.userMediaPhotoCount,
+    seedVariantLabel: options.seedVariantLabel,
+    seedVariantNote: options.seedVariantNote,
+  });
+
   const lines = [
     quality,
+    contextBlock,
     filter.prompt,
+    typeVariant.prompt,
     `Topic: ${topic.trim()}`,
+    "VARIANT DIVERSITY: This image MUST look different from sibling variants — different type treatment, framing decision, and camera look. Do not reuse the same font layout across variants.",
   ];
 
-  if (options.compositionFactors?.length) {
-    lines.push(compositionFactorsPrompt(options.compositionFactors));
+  if (options.compositionFactorHint || options.compositionFactors?.length) {
+    lines.push(
+      compositionFactorVariantPrompt(
+        options.compositionFactorHint,
+        options.compositionFactors?.length
+          ? options.compositionFactors
+          : options.compositionFactorHint
+            ? [options.compositionFactorHint]
+            : []
+      )
+    );
   }
 
   const userBrief = (options.userBrief || "").trim();
@@ -152,27 +255,26 @@ export function buildUltraPrompt(
   const photoCount = options.userMediaPhotoCount || 0;
   if (photoCount > 0) {
     lines.push(
-      `USER MEDIA PHOTOS (${photoCount}): Attached image(s) labeled "Media photo" are the user's own refs (product, person, scene, or style). Ground the thumbnail in these — keep recognizable likeness/product identity. Research thumbs are style-only.`
+      `USER MEDIA PHOTOS (${photoCount}): Attached "Media photo" images are optional ingredients — not a forced full-frame paste.`,
+      "From them, pick the single best contribution for THIS topic/hook: (A) person/face likeness, OR (B) product/object, OR (C) environment/background plate. Crop, reframe, and restage as a thumbnail.",
+      "Keep likeness/product identity recognizable when chosen. Ignore unused photos. Research thumbs stay style-only (layout/palette/type)."
     );
   }
 
   if (options.mediaIntelligence) {
     const media = options.mediaIntelligence;
     lines.push(
-      "MEDIA INTELLIGENCE (ground the thumbnail in this evidence; do not invent unsupported subjects):",
+      "MEDIA INTELLIGENCE (evidence to guide the story — adapt freely into a strong thumb; do not invent unsupported people/products):",
       `Content summary: ${media.summary}`,
       `Audience: ${media.audience}`,
       `Primary subject: ${media.primarySubject}`,
       media.storyBeats.length ? `Story beats: ${media.storyBeats.slice(0, 6).join(" → ")}` : "",
       media.sceneTypes.length ? `Observed scene types: ${media.sceneTypes.join(", ")}` : "",
-      `Visual depth: foreground=${media.depth.foreground}; midground=${media.depth.midground}; background=${media.depth.background}; focal subject=${media.depth.focalSubject}`,
-      media.depth.depthCues.length
-        ? `Depth cues: ${media.depth.depthCues.join(", ")}`
-        : "",
+      `Visual depth cues: foreground=${media.depth.foreground}; midground=${media.depth.midground}; background=${media.depth.background}; focal=${media.depth.focalSubject}`,
       media.thumbnailOpportunities.length
         ? `Thumbnail opportunities: ${media.thumbnailOpportunities.join("; ")}`
         : "",
-      `Measured media colors: ${media.colors.dominant.slice(0, 8).join(", ")}; preferred background ${media.colors.background}; readable text ${media.colors.text}`,
+      `Suggested colors from media (prefer for harmony, override if unreadable): ${media.colors.dominant.slice(0, 8).join(", ")}; bg ${media.colors.background}; text ${media.colors.text}`,
       `Evidence confidence: ${media.confidence.level} (${media.confidence.score}%). ${media.sourceSummary}`,
       media.confidence.limitations.length
         ? `EVIDENCE LIMITS: ${media.confidence.limitations.join("; ")}`
@@ -182,11 +284,13 @@ export function buildUltraPrompt(
 
   if (options.primaryVideoFrame) {
     lines.push(
-      "PRIMARY VIDEO FRAME MODE: The first attached image is the user's uploaded video opening frame. It is the mandatory visual source — same subject, scene, framing, and energy. Research thumbnails are reference-only for colors and typography; they must NOT change who/what is in the image."
+      "KEY FRAME MODE: The first attached image is a selected still from the user's video (YouTube key moment or uploaded clip).",
+      "Treat it as a SOURCE PLATE: extract the best person, object, or background for the topic — recompose into a phone-readable thumbnail. You may crop tightly and change framing.",
+      "Do NOT require a 1:1 paste of the entire frame. Do NOT replace the real person/product with a different invented one. Research thumbs = palette/type/layout only."
     );
   } else if (options.useOpeningFrames) {
     lines.push(
-      "OPENING-FRAME MODE: Attached images include frames extracted from uploaded video clips (first 1–2 seconds). Match that opening-hook visual — subject, framing, and energy of the cold open — when composing the thumbnail."
+      "VIDEO STILL MODE: Attached frames are key-moment candidates from the user's video (YouTube samples across the runtime, or uploaded clips). Prefer the clearest hero subject or object that matches the topic — not limited to the first 1–2 seconds."
     );
   }
 
@@ -198,7 +302,20 @@ export function buildUltraPrompt(
     );
   }
 
-  if (hook) lines.push(`Bold hook text (phone-readable, ALL CAPS): "${hook}"`);
+  if (hook) {
+    lines.push(
+      `Bold hook text (phone-readable, 2–5 words) — spell EXACTLY, no extra letters: "${hook}"`,
+      "Render the hook using THIS variant's type treatment above. Match lettering energy from attached reference thumbs when present, but keep this variant's distinct font/layout so siblings look different.",
+      "HARD TEXT RULE: One clean pass of the words only. No overlapping letters, no ghost/echo duplicate layer, no melted strokes, no duplicated endings. Every character must be separate and readable."
+    );
+  } else {
+    // Empty Hook field = intentional. Never invent on-thumb copy from the video title / topic.
+    lines.push(
+      "NO HOOK TEXT (critical): The Hook field is empty. Do NOT put any words, titles, captions, or logos on the thumbnail.",
+      `FORBIDDEN: using the Topic/video title ("${topic.trim()}") or any paraphrase of it as on-image text. No invented slogans either.`,
+      "Image-only composition — subject, color, and framing carry the click. Ignore TYPE VARIANT lettering instructions when no hook is provided."
+    );
+  }
 
   if (options.brandLanguage) {
     lines.push(brandLanguagePromptBlock(options.brandLanguage));
@@ -213,22 +330,32 @@ export function buildUltraPrompt(
     lines.push(`Direction: ${options.styleBrief.creativeDirection}`);
     if (options.styleBrief.colorPalette?.length) {
       const colorLine = options.primaryVideoFrame
-        ? `Colors (apply to primary video frame — palette from research, do not change subject): ${options.styleBrief.colorPalette
+        ? `Color direction (harmonize with key frame; prioritize subject readability over exact hex locks): ${options.styleBrief.colorPalette
             .slice(0, 5)
             .join(", ")}`
         : options.mediaIntelligence
-          ? `Colors (${options.mediaIntelligence.colors.source === "measured" ? "MUST match these hex measured from supplied media" : "fallback direction; adjust only if needed for faithful content"}): ${options.styleBrief.colorPalette
+          ? `Color direction (${options.mediaIntelligence.colors.source === "measured" ? "prefer these media-measured swatches when they stay readable" : "soft palette hint"}): ${options.styleBrief.colorPalette
               .slice(0, 5)
               .join(", ")}`
-          : `Colors (MUST match these hex from liked thumbnails): ${options.styleBrief.colorPalette
+          : `Color direction from liked thumbs (match energy, not pixel-perfect locks): ${options.styleBrief.colorPalette
               .slice(0, 5)
               .join(", ")}`;
       lines.push(colorLine);
     }
     if (options.styleBrief.typography) {
-      lines.push(`Typography: ${options.styleBrief.typography}`);
+      if (hook) {
+        lines.push(
+          `REFERENCE TYPOGRAPHY from selected/liked thumbs (study & adapt — weight, case, outline, placement): ${options.styleBrief.typography}`,
+          "Ground THIS variant's type in that reference language, then apply the TYPE VARIANT above so outputs are visibly different from sibling variants."
+        );
+      } else {
+        lines.push(
+          `REFERENCE TYPOGRAPHY (study only — do NOT render any text): ${options.styleBrief.typography}`,
+          "Hook is empty — keep the frame text-free. Do not invent lettering from references or the topic."
+        );
+      }
     }
-    lines.push("Mood: trustworthy documentary — optimistic but grounded, not glossy ad CGI.");
+    lines.push("Mood: clear, high-contrast YouTube energy — confident, not muddy or over-filtered.");
     if (options.styleBrief.avoidList.length) {
       lines.push(`AVOID: ${options.styleBrief.avoidList.join("; ")}`);
     }
@@ -250,10 +377,16 @@ export function buildUltraPrompt(
       .join("; ");
     if (options.primaryVideoFrame) {
       lines.push(
-        `Liked references (style hints only — do NOT override primary video frame): ${likedRefs}`
+        `Liked references (palette + typography + layout hints only — do NOT override primary video frame): ${likedRefs}`
+      );
+    } else if (hook) {
+      lines.push(
+        `STRONGLY match patterns from user-liked references — especially hook FONTS (weight, case, outline) and layout: ${likedRefs}`
       );
     } else {
-      lines.push(`STRONGLY match patterns from user-liked references: ${likedRefs}`);
+      lines.push(
+        `Liked references (palette + layout only — NO on-image text): ${likedRefs}`
+      );
     }
   }
 
@@ -273,9 +406,13 @@ export function buildUltraPrompt(
       .map((v) => `"${v.title}" (${v.channel})`)
       .join("; ");
     if (options.primaryVideoFrame) {
-      lines.push(`Research thumbnails (palette/typography reference only): ${refs}`);
+      lines.push(
+        `Research thumbnails (palette/typography/layout reference only — read their hook fonts): ${refs}`
+      );
     } else {
-      lines.push(`Additional references (layout/palette only): ${refs}`);
+      lines.push(
+        `Additional references (layout/palette/fonts only — copy type energy, not subjects): ${refs}`
+      );
     }
   } else if (
     !options.mediaIntelligence &&
@@ -286,7 +423,9 @@ export function buildUltraPrompt(
     photoCount === 0
   ) {
     lines.push(
-      "SCRATCH MODE: No reference thumbnails provided. Invent a strong original YouTube thumbnail from the topic/hook alone — bold phone-readable text, clear subject, high contrast, 16:9 documentary energy. Do not copy a known channel's art."
+      hook
+        ? "SCRATCH MODE: No reference thumbnails provided. Invent a strong original YouTube thumbnail from the topic + provided hook — bold phone-readable text, clear subject, high contrast, 16:9 documentary energy. Do not copy a known channel's art."
+        : "SCRATCH MODE: No reference thumbnails and no hook. Invent a strong original YouTube thumbnail from the topic alone — clear subject, high contrast, 16:9 documentary energy, ZERO on-image text. Do not copy a known channel's art or put the topic title on the image."
     );
   } else if (
     !options.inspirations?.length &&
@@ -298,5 +437,5 @@ export function buildUltraPrompt(
     );
   }
 
-  return lines.join("\n");
+  return lines.filter(Boolean).join("\n");
 }

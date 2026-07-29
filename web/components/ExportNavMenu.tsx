@@ -8,7 +8,7 @@ import {
   Copy,
   Download,
   ExternalLink,
-  Loader2,
+  LoaderCircle,
   Package,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -162,13 +162,13 @@ export function ExportNavMenu({
           // shown below
         }
         window.open(data.figmaNewFileUrl || "https://www.figma.com/new", "_blank", "noopener,noreferrer");
-        toast.success("Layer URL copied — run Thumbnail Studio Import and paste it");
+        toast.success("Layer URL copied. Run Thumbnail Studio Import and paste it");
       } else {
         const downloadUrl = data.imageDownloadUrl || data.flatImageUrl;
         if (!downloadUrl) throw new Error("No image URL");
         await triggerBrowserDownload(downloadUrl, safeFilename("png"));
         window.open(data.figmaNewFileUrl || "https://www.figma.com/new", "_blank", "noopener,noreferrer");
-        toast.success("PNG downloaded — drag onto the Figma canvas");
+        toast.success("PNG downloaded. Drag onto the Figma canvas");
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Figma export failed");
@@ -210,7 +210,7 @@ export function ExportNavMenu({
         "_blank",
         "noopener,noreferrer"
       );
-      toast.success("PNG downloaded — upload in Canva → Uploads");
+      toast.success("PNG downloaded. Upload it in Canva under Uploads");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Canva export failed");
     } finally {
@@ -256,7 +256,7 @@ export function ExportNavMenu({
               </Badge>
             </div>
 
-            <ol className="list-decimal space-y-1 pl-4 type-caption text-[#727578]">
+            <ol className="list-decimal space-y-1 pl-4 type-caption text-[#5c5e60]">
               <li>
                 Download{" "}
                 <a
@@ -290,7 +290,7 @@ export function ExportNavMenu({
                   "h-8 rounded-[8px] border px-2.5 type-caption font-medium transition-colors",
                   figmaMode === "layers"
                     ? "border-[#171618] bg-[#171618] text-white"
-                    : "border-[#efefef] text-[#727578] hover:border-[#727578]"
+                    : "border-[#efefef] text-[#5c5e60] hover:border-[#727578]"
                 )}
                 onClick={() => setFigmaMode("layers")}
               >
@@ -302,7 +302,7 @@ export function ExportNavMenu({
                   "h-8 rounded-[8px] border px-2.5 type-caption font-medium transition-colors",
                   figmaMode === "flat"
                     ? "border-[#171618] bg-[#171618] text-white"
-                    : "border-[#efefef] text-[#727578] hover:border-[#727578]"
+                    : "border-[#efefef] text-[#5c5e60] hover:border-[#727578]"
                 )}
                 onClick={() => setFigmaMode("flat")}
               >
@@ -317,7 +317,7 @@ export function ExportNavMenu({
               onClick={() => void handleFigmaExport()}
             >
               {exportingFigma ? (
-                <Loader2 className="size-3.5 animate-spin" />
+                <LoaderCircle className="size-3.5 animate-spin" />
               ) : (
                 <ExternalLink className="size-3.5" />
               )}
@@ -326,7 +326,7 @@ export function ExportNavMenu({
 
             {lastLayerUrl && (
               <div className="space-y-1 rounded-[8px] border border-[#efefef] bg-[#f7f7f7] px-2 py-1.5">
-                <p className="break-all type-caption text-[#727578] line-clamp-2">{lastLayerUrl}</p>
+                <p className="break-all type-caption text-[#5c5e60] line-clamp-2">{lastLayerUrl}</p>
                 <button
                   type="button"
                   className="inline-flex items-center gap-1 type-caption font-medium text-[#171618] hover:underline"
@@ -353,7 +353,7 @@ export function ExportNavMenu({
                     className="flex h-8 items-center gap-2 rounded-[8px] px-2 text-left type-caption text-[#171618] hover:bg-[#f7f7f7] disabled:opacity-40"
                     onClick={onDownloadPng}
                   >
-                    <Download className="size-3.5 text-[#727578]" />
+                    <Download className="size-3.5 text-[#5c5e60]" />
                     Download PNG
                   </button>
                 )}
@@ -365,9 +365,9 @@ export function ExportNavMenu({
                     onClick={onExportDesignPack}
                   >
                     {exportingDesignPack ? (
-                      <Loader2 className="size-3.5 animate-spin text-[#727578]" />
+                      <LoaderCircle className="size-3.5 animate-spin text-[#5c5e60]" />
                     ) : (
-                      <Package className="size-3.5 text-[#727578]" />
+                      <Package className="size-3.5 text-[#5c5e60]" />
                     )}
                     Design pack
                   </button>
@@ -379,9 +379,9 @@ export function ExportNavMenu({
                   onClick={() => void handleCanvaPng()}
                 >
                   {exportingCanva ? (
-                    <Loader2 className="size-3.5 animate-spin text-[#727578]" />
+                    <LoaderCircle className="size-3.5 animate-spin text-[#5c5e60]" />
                   ) : (
-                    <Download className="size-3.5 text-[#727578]" />
+                    <Download className="size-3.5 text-[#5c5e60]" />
                   )}
                   Canva (PNG upload)
                 </button>

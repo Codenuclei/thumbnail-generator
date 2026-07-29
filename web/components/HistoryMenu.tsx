@@ -64,8 +64,8 @@ export function HistoryMenu({
             <DialogTitle>Saved sessions</DialogTitle>
           </DialogHeader>
           {history.length === 0 ? (
-            <p className="type-ui font-normal text-[#727578]">
-              No saved sessions yet. Hit Save or generate a thumbnail — we auto-save after each run.
+            <p className="type-ui font-normal text-[#5c5e60]">
+              No saved sessions yet. Hit Save or generate a thumbnail. We auto-save after each run.
             </p>
           ) : (
             <div className="space-y-2">
@@ -87,7 +87,7 @@ export function HistoryMenu({
                     <p className="line-clamp-2 type-ui text-[#171618]">
                       {session.topic || "Untitled"}
                     </p>
-                    <p className="mt-1 type-caption text-[#727578]">
+                    <p className="mt-1 type-caption text-[#5c5e60]">
                       {new Date(session.updatedAt).toLocaleString()}
                       {session.shareSlug ? ` · /s/${session.shareSlug}` : ""}
                     </p>
@@ -128,6 +128,7 @@ export function HistoryMenu({
                         type="button"
                         size="icon-sm"
                         variant="ghost"
+                        aria-label="Delete session"
                         onClick={() => onDelete(session.id)}
                       >
                         <Trash2 className="size-3.5" />

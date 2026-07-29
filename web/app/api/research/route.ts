@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
 
         hook,
 
-        strict: false,
+        strict: true,
 
       });
 
@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
 
       hook,
 
-      strict: false,
+      strict: true,
 
       targetCount: TARGET_RESULTS,
 

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ColorPicker } from "@/components/ColorPicker";
 import { cn } from "@/lib/utils";
-import { Loader2, Sparkles, ThumbsDown, ThumbsUp } from "lucide-react";
+import { LoaderCircle, Sparkles, ThumbsDown, ThumbsUp } from "lucide-react";
 import { useState } from "react";
 
 type Props = {
@@ -45,8 +45,8 @@ export function PalettePicker({
     return (
       <div className="rounded-[12px] border border-[#efefef] bg-[#f7f7f7] px-3 py-2.5">
         <p className="type-ui text-[#171618]">Color suggestions</p>
-        <p className="mt-0.5 type-caption text-[#727578]">
-          Like qualified thumbnails first — then pick a palette and tweak any swatch.
+        <p className="mt-0.5 type-caption text-[#5c5e60]">
+          Like qualified thumbnails, then press Suggest colors when you&apos;re done selecting.
         </p>
       </div>
     );
@@ -66,14 +66,14 @@ export function PalettePicker({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <p className="type-ui text-[#171618]">Color suggestions</p>
-          <p className="type-caption text-[#727578]">
+          <p className="type-caption text-[#5c5e60]">
             {sourceLabel || "Extracted from liked thumbs"} · click a card to select
           </p>
         </div>
         {!palettes.length && hasLikes && (
           <Button size="sm" disabled={loading} onClick={() => onSuggest()}>
             {loading ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <LoaderCircle className="size-3.5 animate-spin" />
             ) : (
               <Sparkles className="size-3.5" />
             )}
@@ -119,7 +119,7 @@ export function PalettePicker({
                         type="button"
                         className={cn(
                           "rounded-full p-1",
-                          rating === "like" ? "text-[#004d60]" : "text-[#727578]"
+                          rating === "like" ? "text-[#004d60]" : "text-[#5c5e60]"
                         )}
                         onClick={() => onRatePalette(p.id, "like")}
                         aria-label="Like palette"
@@ -130,7 +130,7 @@ export function PalettePicker({
                         type="button"
                         className={cn(
                           "rounded-full p-1",
-                          rating === "dislike" ? "text-[#ff3e00]" : "text-[#727578]"
+                          rating === "dislike" ? "text-[#ff3e00]" : "text-[#5c5e60]"
                         )}
                         onClick={() => onRatePalette(p.id, "dislike")}
                         aria-label="Dislike palette"
@@ -166,7 +166,7 @@ export function PalettePicker({
                 </div>
 
                 {p.rationale && (
-                  <p className="mt-1 type-caption text-[#727578] line-clamp-1">{p.rationale}</p>
+                  <p className="mt-1 type-caption text-[#5c5e60] line-clamp-1">{p.rationale}</p>
                 )}
               </div>
             );
@@ -192,7 +192,7 @@ export function PalettePicker({
               setFeedbackNote("");
             }}
           >
-            {loading ? <Loader2 className="size-3.5 animate-spin" /> : "Apply"}
+            {loading ? <LoaderCircle className="size-3.5 animate-spin" /> : "Apply"}
           </Button>
         </div>
       )}

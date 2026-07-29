@@ -115,8 +115,8 @@ export type BuiltPalette = {
 };
 
 /**
- * Build 4 distinct palettes from pooled swatches sampled from liked thumbs.
- * Each palette: dark/light anchor + 2 accents pulled from real pixels.
+ * Build 4 visually DISTINCT palettes from pooled swatches (liked thumbs / media).
+ * Each box must lead with a different accent and not reshuffle the same 4 hexes.
  */
 export function buildPalettesFromSwatches(
   swatches: ExtractedSwatch[],
@@ -124,57 +124,178 @@ export function buildPalettesFromSwatches(
 ): BuiltPalette[] {
   if (!swatches.length) return [];
 
-  const bySat = [...swatches].sort(
-    (a, b) => saturation(b.r, b.g, b.b) - saturation(a.r, a.g, a.b)
-  );
-  const byLum = [...swatches].sort(
+  const pool = [...swatches].sort((a, b) => b.count - a.count);
+  const byLum = [...pool].sort(
     (a, b) => luminance(a.r, a.g, a.b) - luminance(b.r, b.g, b.b)
+  );
+  const bySat = [...pool].sort(
+    (a, b) => saturation(b.r, b.g, b.b) - saturation(a.r, a.g, a.b)
   );
 
   const darkest = byLum[0];
   const lightest = byLum[byLum.length - 1];
-  const accents = bySat.filter(
-    (s) =>
-      colorDistance(s, darkest) > 50 &&
-      colorDistance(s, lightest) > 50 &&
-      saturation(s.r, s.g, s.b) > 0.12
-  );
-  const mid = byLum[Math.floor(byLum.length / 2)] || swatches[0];
+  const mid = byLum[Math.floor(byLum.length / 2)] || pool[0];
 
-  const a1 = accents[0] || bySat[0] || mid;
-  const a2 = accents[1] || bySat[1] || mid;
-  const a3 = accents[2] || bySat[2] || a1;
-  const a4 = accents[3] || bySat[Math.min(3, bySat.length - 1)] || a2;
+  // Distinct accent leads — greedily spaced so palette boxes don't look identical
+  const accentLeads: ExtractedSwatch[] = [];
+  for (const candidate of bySat) {
+    if (colorDistance(candidate, darkest) < 40) continue;
+    if (colorDistance(candidate, lightest) < 40) continue;
+    if (accentLeads.every((picked) => colorDistance(picked, candidate) > 55)) {
+      accentLeads.push(candidate);
+    }
+    if (accentLeads.length >= 4) break;
+  }
+  // Fallback fill if we don't have 4 distant accents
+  for (const candidate of pool) {
+    if (accentLeads.length >= 4) break;
+    if (accentLeads.some((p) => p.hex === candidate.hex)) continue;
+    accentLeads.push(candidate);
+  }
+  while (accentLeads.length < 4) {
+    accentLeads.push(accentLeads[accentLeads.length - 1] || mid);
+  }
 
-  const darkHex = darkest.hex;
-  const lightHex = lightest.hex;
+  function pickCompanion(
+    lead: ExtractedSwatch,
+    used: Set<string>,
+    prefer: "dark" | "light" | "sat" | "mid"
+  ): ExtractedSwatch {
+    const ordered =
+      prefer === "dark"
+        ? byLum
+        : prefer === "light"
+          ? [...byLum].reverse()
+          : prefer === "sat"
+            ? bySat
+            : [mid, ...pool];
+    for (const c of ordered) {
+      if (used.has(c.hex)) continue;
+      if (colorDistance(c, lead) < 35) continue;
+      return c;
+    }
+    for (const c of pool) {
+      if (!used.has(c.hex)) return c;
+    }
+    return mid;
+  }
 
-  return [
-    {
-      id: "extracted-dominant",
-      name: "From thumbs",
-      colors: [darkHex, lightHex, a1.hex, a2.hex],
-      rationale: `Dominant + accent colors sampled from ${sourceLabel}.`,
-    },
-    {
-      id: "extracted-high-key",
-      name: "High key pull",
-      colors: [lightHex, darkHex, a2.hex, a3.hex],
-      rationale: `Light-first grade using real swatches from ${sourceLabel}.`,
-    },
-    {
-      id: "extracted-accent-lead",
-      name: "Accent lead",
-      colors: [a1.hex, darkHex, lightHex, a3.hex],
-      rationale: `Lead accent from liked thumbs, anchored with real dark/light.`,
-    },
-    {
-      id: "extracted-dual-accent",
-      name: "Dual accent",
-      colors: [darkHex, a1.hex, a4.hex, lightHex],
-      rationale: `Two competing accents pulled from the same liked frames.`,
-    },
+  function makePalette(
+    id: string,
+    name: string,
+    lead: ExtractedSwatch,
+    order: Array<"lead" | "dark" | "light" | "sat" | "mid">,
+    rationale: string
+  ): BuiltPalette {
+    const used = new Set<string>([lead.hex]);
+    const colors: string[] = [];
+    for (const slot of order) {
+      if (slot === "lead") {
+        colors.push(lead.hex);
+        continue;
+      }
+      const next = pickCompanion(lead, used, slot);
+      used.add(next.hex);
+      colors.push(next.hex);
+    }
+    // Ensure 4 slots
+    while (colors.length < 4) {
+      const next = pool.find((s) => !used.has(s.hex)) || mid;
+      used.add(next.hex);
+      colors.push(next.hex);
+    }
+    return { id, name, colors: colors.slice(0, 4), rationale };
+  }
+
+  const recipes: BuiltPalette[] = [
+    makePalette(
+      "extracted-dominant",
+      "From thumbs",
+      accentLeads[0],
+      ["dark", "light", "lead", "sat"],
+      `Dark/light anchors + lead accent from ${sourceLabel}.`
+    ),
+    makePalette(
+      "extracted-high-key",
+      "High key pull",
+      accentLeads[1],
+      ["light", "lead", "dark", "mid"],
+      `Light-first grade with a different accent lead from ${sourceLabel}.`
+    ),
+    makePalette(
+      "extracted-accent-lead",
+      "Accent lead",
+      accentLeads[2],
+      ["lead", "dark", "light", "sat"],
+      `Accent-forward palette — different lead hue than the other boxes.`
+    ),
+    makePalette(
+      "extracted-dual-accent",
+      "Dual accent",
+      accentLeads[3],
+      ["lead", "sat", "dark", "light"],
+      `Second accent family from ${sourceLabel} — not a reshuffle of box 1.`
+    ),
   ];
+
+  return ensureDistinctPaletteSets(recipes, pool);
+}
+
+/** Push palettes apart when two boxes share too many of the same hexes. */
+export function ensureDistinctPaletteSets(
+  palettes: BuiltPalette[],
+  pool: ExtractedSwatch[] = []
+): BuiltPalette[] {
+  const result = palettes.map((p) => ({
+    ...p,
+    colors: [...p.colors],
+  }));
+
+  const signature = (colors: string[]) =>
+    colors.map((c) => c.toUpperCase()).sort().join("|");
+
+  const overlapCount = (a: string[], b: string[]) => {
+    const setB = new Set(b.map((c) => c.toUpperCase()));
+    return a.filter((c) => setB.has(c.toUpperCase())).length;
+  };
+
+  const unusedFromPool = (used: Set<string>, salt: number) => {
+    const candidates = pool.filter((s) => !used.has(s.hex.toUpperCase()));
+    if (!candidates.length) return pool[salt % Math.max(pool.length, 1)];
+    return candidates[salt % candidates.length];
+  };
+
+  const seen = new Set<string>();
+  for (let i = 0; i < result.length; i++) {
+    let guard = 0;
+    while (guard < 6) {
+      const sig = signature(result[i].colors);
+      const tooSimilar = result
+        .slice(0, i)
+        .some((prev) => overlapCount(prev.colors, result[i].colors) >= 3);
+      if (!seen.has(sig) && !tooSimilar) {
+        seen.add(sig);
+        break;
+      }
+      const used = new Set(result[i].colors.map((c) => c.toUpperCase()));
+      const swap = unusedFromPool(used, i + guard);
+      if (swap) {
+        const slot = (i + guard) % 4;
+        result[i].colors[slot] = swap.hex;
+      } else {
+        result[i].colors = [
+          result[i].colors[1],
+          result[i].colors[2],
+          result[i].colors[3],
+          result[i].colors[0],
+        ];
+      }
+      guard += 1;
+    }
+    seen.add(signature(result[i].colors));
+  }
+
+  return result;
 }
 
 /** Resolve YouTube thumbnail URL variants when the primary URL fails. */

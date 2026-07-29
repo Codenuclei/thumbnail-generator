@@ -8,7 +8,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
-import { Loader2 } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 
 type Props = {
   open: boolean;
@@ -31,11 +31,11 @@ export function StatusDialog({ open, title, message, progress }: Props) {
       >
         <DialogHeader className="items-center text-center">
           <div className="mb-2 flex size-12 items-center justify-center rounded-full bg-[#f7f7f7]">
-            <Loader2 className="size-6 animate-spin text-[#38296c]" />
+            <LoaderCircle className="size-6 animate-spin text-[#38296c]" />
           </div>
           <DialogTitle className="type-subheading text-[#171618]">{title}</DialogTitle>
           {message ? (
-            <DialogDescription className="type-ui font-normal text-[#727578]">
+            <DialogDescription className="type-ui font-normal text-[#5c5e60]">
               {message}
             </DialogDescription>
           ) : null}
@@ -44,7 +44,7 @@ export function StatusDialog({ open, title, message, progress }: Props) {
         {showProgress ? (
           <div className="space-y-2">
             <Progress value={progress} />
-            <p className="text-center type-caption text-[#727578]">{progress}%</p>
+            <p className="text-center type-caption text-[#5c5e60]">{progress}%</p>
           </div>
         ) : null}
       </DialogContent>

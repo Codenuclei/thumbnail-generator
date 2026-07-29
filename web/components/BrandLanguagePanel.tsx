@@ -65,6 +65,7 @@ function ChipList({
           type="button"
           size="icon-sm"
           variant="outline"
+          aria-label="Add"
           onClick={() => {
             if (!draft.trim()) return;
             if (!values.includes(draft.trim())) onChange([...values, draft.trim()]);
@@ -80,11 +81,11 @@ function ChipList({
 
 export function BrandLanguagePanel({ language, onChange }: Props) {
   return (
-    <section className="space-y-4 rounded-[16px] border border-[#efefef] bg-white p-5">
+    <section className="space-y-3 border-t border-[#efefef] pt-5">
       <div>
         <h3 className="type-ui text-[#171618]">Brand language</h3>
-        <p className="mt-1 type-caption text-[#727578]">
-          Approved and avoided phrases, motifs, and tone applied to hooks and prompts.
+        <p className="mt-1 type-caption text-[#5c5e60]">
+          Optional. Approved and avoided phrases applied to hooks and prompts.
         </p>
       </div>
 

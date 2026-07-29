@@ -40,8 +40,8 @@ export async function suggestTitlesForVariants(input: {
 Topic: "${input.topic}"
 ${input.hook ? `Hook on thumbnail: "${input.hook}"` : ""}
 
-Reference titles user LIKED (match energy, do NOT copy verbatim):
-${input.likedTitles.length ? input.likedTitles.map((t) => `- ${t}`).join("\n") : "- none"}
+Reference titles user LIKED (PRIMARY inspiration — match energy/structure, do NOT copy verbatim):
+${input.likedTitles.length ? input.likedTitles.map((t) => `- ${t}`).join("\n") : "- none — invent strong titles from topic"}
 
 ${input.dislikedTitles?.length ? `Avoid patterns from disliked:\n${input.dislikedTitles.map((t) => `- ${t}`).join("\n")}` : ""}
 
@@ -51,7 +51,7 @@ ${variantLines}
 Rules:
 - Premium documentary / business tone
 - Each title must be DISTINCT — no duplicates
-- Inspired by liked refs but NEW wording (not the same title)
+- Heavily inspired by liked refs' energy and phrasing patterns, but NEW wording
 - Searchable, clear, optimistic
 - 40–70 characters ideal
 - No cheap clickbait
@@ -71,7 +71,7 @@ Return ONLY JSON:
         contents: [{ role: "user", parts: [{ text: prompt }] }],
         generationConfig: { temperature: 0.45, maxOutputTokens: 1200 },
       }),
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(10_000),
     });
 
     if (!res.ok) throw new Error(`titles ${res.status}`);

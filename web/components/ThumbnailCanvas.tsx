@@ -79,7 +79,7 @@ export function ThumbnailCanvas({
       {preview ? (
         <img src={preview} alt="Editor canvas" className="h-full w-full object-contain" />
       ) : (
-        <div className="flex h-full items-center justify-center text-sm text-[#727578]">
+        <div className="flex h-full items-center justify-center text-sm text-[#5c5e60]">
           Rendering canvas…
         </div>
       )}

@@ -6,7 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ImagePlus, Trash2, Wand2 } from "lucide-react";
+import { ImagePlus, Trash2, WandSparkles } from "lucide-react";
 import { compressFile, MAX_EDIT_ASSETS } from "@/lib/image-compress-client";
 import { LayerEditorPanel } from "@/components/LayerEditorPanel";
 import type { EditorHistory } from "@/lib/editor-history";
@@ -129,7 +129,7 @@ export function ThumbnailEditor({
           <Textarea
             id="iterationNote"
             className="min-h-[96px]"
-            placeholder="e.g. brighter sky, bigger hook text, swap factory for vineyard scene…"
+            placeholder="brighter sky, bigger hook text"
             value={iterationNote}
             onChange={(e) => onIterationNoteChange(e.target.value)}
             rows={4}
@@ -140,7 +140,7 @@ export function ThumbnailEditor({
           <div className="flex items-center justify-between">
             <Label>
               Replace / add assets{" "}
-              <span className="font-normal text-[#727578]">
+              <span className="font-normal text-[#5c5e60]">
                 ({assets.length}/{MAX_EDIT_ASSETS})
               </span>
             </Label>
@@ -163,7 +163,7 @@ export function ThumbnailEditor({
             />
           </div>
           {assets.length === 0 ? (
-            <p className="type-ui font-normal text-[#727578]">
+            <p className="type-ui font-normal text-[#5c5e60]">
               Upload logos, product shots, or backgrounds (auto-compressed for API limits).
             </p>
           ) : (
@@ -185,6 +185,7 @@ export function ThumbnailEditor({
                     variant="destructive"
                     size="icon-xs"
                     className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100"
+                    aria-label={`Remove ${asset.name}`}
                     onClick={() => removeAsset(asset.id)}
                   >
                     <Trash2 className="size-3" />
@@ -201,7 +202,7 @@ export function ThumbnailEditor({
           disabled={loading || !iterationNote.trim()}
           onClick={onIterate}
         >
-          <Wand2 className="size-4" />
+          <WandSparkles className="size-4" />
           {loading ? "Applying…" : "Apply iteration"}
         </Button>
 
@@ -222,7 +223,7 @@ export function ThumbnailEditor({
                     alt={`v${entry.index}`}
                     className="aspect-video w-[96px] object-cover"
                   />
-                  <span className="block bg-[#f7f7f7] py-1.5 text-center type-caption font-medium text-[#727578]">
+                  <span className="block bg-[#f7f7f7] py-1.5 text-center type-caption font-medium text-[#5c5e60]">
                     v{entry.index}
                   </span>
                 </button>

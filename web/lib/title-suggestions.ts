@@ -12,14 +12,17 @@ export async function suggestTitlesFromFeedback(input: {
 }): Promise<string[]> {
   const apiKey = runtimeEnv("GEMINI_API_KEY") || runtimeEnv("GOOGLE_API_KEY");
   if (!apiKey) {
-    return input.existingSuggestions?.slice(0, 4) || [input.topic];
+    const fromLiked = input.likedTitles.filter(Boolean).slice(0, 4);
+    return fromLiked.length
+      ? fromLiked
+      : input.existingSuggestions?.slice(0, 4) || [input.topic];
   }
 
   const prompt = `You are a YouTube title strategist. Generate 5 premium video title ideas.
 
 Current topic: "${input.topic}"
 
-User liked these reference video styles/titles:
+User liked these reference video styles/titles (PRIMARY inspiration — match energy, do NOT copy verbatim):
 ${input.likedTitles.length ? input.likedTitles.map((t) => `- ${t}`).join("\n") : "- none yet"}
 
 User disliked:
@@ -27,6 +30,9 @@ ${input.dislikedTitles.length ? input.dislikedTitles.map((t) => `- ${t}`).join("
 
 User feedback notes:
 ${input.feedbackNotes || "No extra notes"}
+
+Existing title ideas (may refine, do not ignore liked refs):
+${input.existingSuggestions?.length ? input.existingSuggestions.map((t) => `- ${t}`).join("\n") : "- none"}
 
 Requirements:
 - Premium business/documentary tone
@@ -57,9 +63,16 @@ Return ONLY JSON: { "titles": ["title 1", "title 2", ...] }`;
 
     const parsed = JSON.parse(match[0]) as { titles?: string[] };
     const titles = (parsed.titles || []).filter((t) => t.trim()).slice(0, 5);
-    return titles.length ? titles : input.existingSuggestions || [input.topic];
+    if (titles.length) return titles;
+    const fromLiked = input.likedTitles.filter(Boolean).slice(0, 4);
+    return fromLiked.length
+      ? fromLiked
+      : input.existingSuggestions || [input.topic];
   } catch (err) {
     console.error("Title suggestion error:", err);
-    return input.existingSuggestions?.slice(0, 4) || [input.topic];
+    const fromLiked = input.likedTitles.filter(Boolean).slice(0, 4);
+    return fromLiked.length
+      ? fromLiked
+      : input.existingSuggestions?.slice(0, 4) || [input.topic];
   }
 }

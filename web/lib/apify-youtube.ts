@@ -138,7 +138,7 @@ export async function scrapeYouTubeWithApify(
     maxResults: options?.maxResults ?? 30,
     maxResultsShorts: 0,
     maxResultStreams: 0,
-    sortingOrder: "views",
+    sortingOrder: "relevance",
   };
 
   if (channelUrls.length) {
@@ -147,10 +147,10 @@ export async function scrapeYouTubeWithApify(
   } else {
     input.searchQueries = [
       topic.trim(),
-      `${topic.trim()} documentary`,
       `${topic.trim()} explained`,
-      `${topic.trim()} investigation`,
-      `${topic.trim()} full video`,
+      `${topic.trim()} highlights`,
+      `${topic.trim()} full`,
+      `${topic.trim()} review`,
     ].slice(0, 5);
   }
 

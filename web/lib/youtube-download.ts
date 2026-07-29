@@ -1,5 +1,6 @@
 /**
- * YouTube on Railway: yt-dlp download -> ffmpeg samples -> Laplacian/Gemini pick.
+ * YouTube on Railway: yt-dlp download -> key-moment ffmpeg samples -> Laplacian/Gemini pick.
+ * Samples landmarks (start / 25% / 50% / …) plus motion-peak candidates across the runtime.
  * No CDN thumbnail shortcuts. If yt-dlp is missing or fails, this throws.
  */
 

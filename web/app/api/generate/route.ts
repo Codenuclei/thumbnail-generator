@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { buildUltraPrompt, cameraFilterForIndex } from "@/lib/prompt-engine";
-import { generateThumbnail, generateThumbnailVariants } from "@/lib/generate";
+import {
+  buildUltraPrompt,
+  cameraFilterForIndex,
+  typographyVariantForIndex,
+} from "@/lib/prompt-engine";
+import {
+  DEFAULT_VARIANT_COUNT,
+  generateThumbnail,
+  generateThumbnailVariants,
+} from "@/lib/generate";
 import { buildPipelineOverview } from "@/lib/pipeline-overview";
 import {
   applyPaletteToBrief,
@@ -16,10 +24,11 @@ import { compressAssetsForApi, compressBase64Server } from "@/lib/image-compress
 import type { GenerationMediaIntelligence } from "@/lib/video-intelligence-types";
 import type { BrandLanguage } from "@/lib/brand-language";
 import type { ChannelProfile } from "@/lib/channel-profile";
+import type { TopicContext } from "@/lib/gemini-filter";
 
 import { runtimeEnv } from "@/lib/runtime-env";
 
-export const maxDuration = 120;
+export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
 const VARIANT_COMPOSITIONS = ["center", "cutout", "split", "data"] as const;
@@ -34,7 +43,9 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const topic = String(body.topic || "").trim();
-    const hook = body.hook ? String(body.hook).trim() : undefined;
+    // Empty string means user cleared the hook — do not treat as "missing" for fallbacks.
+    const hook =
+      typeof body.hook === "string" ? String(body.hook).trim() : undefined;
     const composition = body.composition ? String(body.composition) : undefined;
     const model = body.model ? String(body.model) : undefined;
     const inspirations = Array.isArray(body.inspirations) ? body.inspirations : [];
@@ -61,7 +72,10 @@ export async function POST(req: NextRequest) {
     const compositionFactors = Array.isArray(body.compositionFactors)
       ? body.compositionFactors.map(String)
       : [];
-    const variantCount = Math.min(4, Math.max(1, Number(body.variantCount) || 2));
+    const variantCount = Math.min(
+      DEFAULT_VARIANT_COUNT,
+      Math.max(1, Number(body.variantCount) || DEFAULT_VARIANT_COUNT)
+    );
     const assets = Array.isArray(body.assets)
       ? body.assets
           .map((a: { mimeType?: string; data?: string; label?: string }) => ({
@@ -77,6 +91,9 @@ export async function POST(req: NextRequest) {
     const titleSuggestions = Array.isArray(body.titleSuggestions)
       ? body.titleSuggestions.map(String)
       : [];
+    const explicitLikedTitles = Array.isArray(body.likedTitles)
+      ? body.likedTitles.map(String).filter((t: string) => t.trim())
+      : [];
     const mediaIntelligence = body.mediaIntelligence
       ? (body.mediaIntelligence as GenerationMediaIntelligence)
       : undefined;
@@ -87,6 +104,10 @@ export async function POST(req: NextRequest) {
       0,
       Math.min(8, Number(body.userMediaPhotoCount) || 0)
     );
+    const topicContext = body.topicContext as TopicContext | undefined;
+    const seedVariant = body.seedVariant as
+      | { image?: string; label?: string; note?: string }
+      | undefined;
     const selectedIds = new Set<string>(
       inspirations.map((i: InspirationVideo) => i.videoId)
     );
@@ -118,10 +139,15 @@ export async function POST(req: NextRequest) {
     const refPool = likedVideos.length ? likedVideos : sortedInspirations;
 
     const briefWithPalette = applyPaletteToBrief(styleBrief, selectedPalette);
+    // If the user cleared the form hook, strip any stale suggestedHook before prompting.
+    const briefForPrompt =
+      briefWithPalette && !(hook && hook.length)
+        ? { ...briefWithPalette, suggestedHook: undefined }
+        : briefWithPalette;
 
     const pipeline = buildPipelineOverview({
       topic,
-      hook: hook || "",
+      hook: hook ?? "",
       composition: composition || "",
       imageSize,
       model: model || "",
@@ -147,9 +173,9 @@ export async function POST(req: NextRequest) {
         ...compressedAssets,
       ];
       const prompt = buildUltraPrompt(topic, {
-        hook,
+        hook: hook ?? "",
         composition,
-        styleBrief: briefWithPalette,
+        styleBrief: briefForPrompt,
         inspirations: sortedInspirations,
         feedback,
         iterationNote,
@@ -162,8 +188,11 @@ export async function POST(req: NextRequest) {
         channelProfile,
         userBrief: userBrief || undefined,
         userMediaPhotoCount: userMediaPhotoCount || undefined,
+        topicContext,
+        selectedPalette,
+        selectedRefCount: selectedIds.size,
       });
-      const result = await generateThumbnail(prompt, model, [], imageSize, false, allAssets);
+      const result = await generateThumbnail(prompt, model, [], imageSize, false, allAssets, 90_000);
       return NextResponse.json({
         image: result.imageBase64,
         images: [
@@ -182,8 +211,9 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Attach liked thumbnail images as visual references
-    const likedAssets = await likedThumbsAsAssets(refPool);
+    // Attach liked thumbnail images as visual references (compressed — big refs timeout Gemini)
+    const likedRaw = await likedThumbsAsAssets(refPool.slice(0, 3));
+    const likedAssets = await compressAssetsForApi(likedRaw);
 
     // Pre-extracted opening frames (streamed + ffmpeg'd at upload time)
     const openingAssets =
@@ -193,30 +223,74 @@ export async function POST(req: NextRequest) {
     const hasPrimaryVideoFrame = openingAssets.length > 0;
 
     const compressedEditAssets = assets.length ? await compressAssetsForApi(assets) : [];
-    // User-supplied media has priority; liked thumbs fill only remaining style-reference slots.
+
+    let seedAssets: Array<{
+      mimeType: string;
+      data: string;
+      label?: string;
+      role?: "seed";
+    }> = [];
+    if (seedVariant?.image) {
+      const raw = String(seedVariant.image).replace(/^data:[^;]+;base64,/, "");
+      const compressed = await compressBase64Server(raw, "image/png");
+      seedAssets = [
+        {
+          mimeType: compressed.mimeType,
+          data: compressed.data,
+          label: seedVariant.label
+            ? `Generated variant seed: ${seedVariant.label}`
+            : "Generated variant seed",
+          role: "seed" as const,
+        },
+      ];
+    }
+
+    // User-supplied media has priority; seed variant next; liked thumbs fill remaining slots.
     const refSlots = Math.max(
       0,
-      4 - openingAssets.length - compressedEditAssets.length
+      3 - openingAssets.length - compressedEditAssets.length - seedAssets.length
     );
     const likedRefs = likedAssets
       .slice(0, refSlots)
       .map((a) => ({ ...a, role: "reference" as const }));
     const sharedAssets = hasPrimaryVideoFrame
-      ? [...openingAssets, ...compressedEditAssets, ...likedRefs].slice(0, 4)
-      : [...compressedEditAssets, ...likedAssets].slice(0, 4);
+      ? [...openingAssets, ...compressedEditAssets, ...seedAssets, ...likedRefs].slice(0, 3)
+      : [...compressedEditAssets, ...seedAssets, ...likedRefs].slice(0, 3);
 
     const factorPool =
       compositionFactors.length > 0 ? compositionFactors : DEFAULT_FACTOR_IDS;
 
-    // Build 4 combinations: palette × layout × camera × one composition factor each
-    const palettesForVariants: Array<ColorPaletteOption | undefined> = [];
+    // Build 4 combinations: DISTINCT palette × layout × camera × type
+    // Never pad by repeating the same palette box — rotate accents if short.
+    const palettesForVariants: ColorPaletteOption[] = [];
     if (selectedPalette) palettesForVariants.push(selectedPalette);
     for (const p of paletteOptions) {
       if (palettesForVariants.length >= variantCount) break;
-      if (!palettesForVariants.some((x) => x?.id === p.id)) palettesForVariants.push(p);
+      if (!palettesForVariants.some((x) => x.id === p.id)) palettesForVariants.push(p);
     }
-    while (palettesForVariants.length < variantCount) {
-      palettesForVariants.push(selectedPalette || paletteOptions[0]);
+    // If we still need more slots, derive rotated variants from existing ones
+    let rotateIdx = 0;
+    while (palettesForVariants.length < variantCount && palettesForVariants.length > 0) {
+      const base = palettesForVariants[rotateIdx % palettesForVariants.length];
+      const colors = [...base.colors];
+      const rotated = [
+        colors[(rotateIdx + 1) % colors.length],
+        colors[(rotateIdx + 2) % colors.length],
+        colors[(rotateIdx + 3) % colors.length],
+        colors[rotateIdx % colors.length],
+      ].filter(Boolean);
+      // Ensure we didn't just clone the same order
+      const sameAsBase =
+        rotated.length === base.colors.length &&
+        rotated.every((c, i) => c.toUpperCase() === base.colors[i]?.toUpperCase());
+      palettesForVariants.push({
+        ...base,
+        id: `${base.id}-rot-${rotateIdx + 1}`,
+        name: `${base.name} · alt ${rotateIdx + 1}`,
+        colors: sameAsBase ? [...colors].reverse() : rotated,
+        rationale: `${base.rationale} (rotated accents for variant diversity)`,
+      });
+      rotateIdx += 1;
     }
 
     const variantSpecs = Array.from({ length: variantCount }, (_, i) => {
@@ -226,18 +300,26 @@ export async function POST(req: NextRequest) {
           ? composition
           : VARIANT_COMPOSITIONS[i % VARIANT_COMPOSITIONS.length];
       const cam = cameraFilterForIndex(i);
+      const typeVariant = typographyVariantForIndex(i);
       const factorId = factorPool[i % factorPool.length];
       const factorMeta = COMPOSITION_FACTORS.find((f) => f.id === factorId);
       const brief = applyPaletteToBrief(styleBrief, palette);
+      const briefClean =
+        brief && !(hook && hook.length)
+          ? { ...brief, suggestedHook: undefined }
+          : brief;
       const prompt = buildUltraPrompt(topic, {
-        hook,
+        hook: hook ?? "",
         composition: comp,
-        styleBrief: brief,
+        styleBrief: briefClean,
         inspirations: sortedInspirations,
         feedback,
         cameraFilterIndex: i,
+        typographyVariantIndex: i,
         masterPrompt,
-        compositionFactors: [factorId],
+        // Full menu + preferred hint — AI decides if the factor fits this case
+        compositionFactors: factorPool,
+        compositionFactorHint: factorId,
         useOpeningFrames: useOpeningFrames && openingAssets.length > 0,
         primaryVideoFrame: hasPrimaryVideoFrame,
         mediaIntelligence,
@@ -245,10 +327,15 @@ export async function POST(req: NextRequest) {
         channelProfile,
         userBrief: userBrief || undefined,
         userMediaPhotoCount: userMediaPhotoCount || undefined,
+        topicContext,
+        selectedPalette: palette,
+        selectedRefCount: selectedIds.size,
+        seedVariantNote: seedVariant?.note,
+        seedVariantLabel: seedVariant?.label,
       });
       return {
         id: `v${i + 1}`,
-        label: `${palette?.name || "Combo"} · ${COMPOSITION_LAYOUT_LABELS[comp] || comp}`,
+        label: `${palette?.name || "Combo"} · ${COMPOSITION_LAYOUT_LABELS[comp] || comp} · ${typeVariant.label}`,
         paletteId: palette?.id,
         paletteName: palette?.name,
         composition: comp,
@@ -266,35 +353,60 @@ export async function POST(req: NextRequest) {
       imageSize,
       assets: sharedAssets,
       targetCount: variantCount,
+      // Parallel 1K batch needs wall-clock room for 3 variants + titles.
+      // 4×1K parallel needs headroom under maxDuration 300s + client 240s.
+      budgetMs: imageSize === "1K" ? 200_000 : imageSize === "2K" ? 220_000 : 260_000,
     });
 
     if (!images.length) {
       throw new Error("All thumbnail variants failed — try 1K or default model");
     }
 
-    // AI titles — one unique title per variant, inspired by refs but not copied
-    const likedTitles = feedback
-      .filter((f) => f.rating === "like")
-      .map((f) => f.title);
+    // AI titles — prefer explicit likedTitles, then feedback likes, then research suggestions
+    const likedTitles = [
+      ...explicitLikedTitles,
+      ...feedback.filter((f) => f.rating === "like").map((f) => f.title),
+      ...titleSuggestions,
+    ].filter((t, i, arr) => t.trim() && arr.findIndex((x) => x.toLowerCase() === t.toLowerCase()) === i);
     const dislikedTitles = feedback
       .filter((f) => f.rating === "dislike")
       .map((f) => f.title);
 
-    const titleMap = await suggestTitlesForVariants({
-      topic,
-      hook,
-      likedTitles,
-      dislikedTitles,
-      variants: variantSpecs
-        .filter((v) => images.some((img) => img.id === v.id))
-        .map((v) => ({
-          id: v.id,
-          cameraFilter: v.cameraFilterLabel,
-          composition: v.compositionLabel,
-          compositionFactor: v.compositionFactorLabel,
-          paletteName: v.paletteName,
-        })),
-    });
+    const titleFallback = Object.fromEntries(
+      images.map((img, i) => {
+        const spec = variantSpecs.find((v) => v.id === img.id);
+        return [
+          img.id,
+          `${topic}${hook ? `: ${hook}` : ""} — ${spec?.compositionFactorLabel || `Option ${i + 1}`}`,
+        ];
+      })
+    );
+
+    let titleMap: Record<string, string> = titleFallback;
+    try {
+      titleMap = await Promise.race([
+        suggestTitlesForVariants({
+          topic,
+          hook: hook || undefined,
+          likedTitles,
+          dislikedTitles,
+          variants: variantSpecs
+            .filter((v) => images.some((img) => img.id === v.id))
+            .map((v) => ({
+              id: v.id,
+              cameraFilter: v.cameraFilterLabel || "",
+              composition: v.compositionLabel || "",
+              compositionFactor: v.compositionFactorLabel || "",
+              paletteName: v.paletteName,
+            })),
+        }),
+        new Promise<Record<string, string>>((resolve) =>
+          setTimeout(() => resolve(titleFallback), 8_000)
+        ),
+      ]);
+    } catch {
+      titleMap = titleFallback;
+    }
 
     const enriched = images.map((img) => {
       const spec = variantSpecs.find((v) => v.id === img.id);

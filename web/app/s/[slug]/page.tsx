@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 import { readJsonResponse } from "@/lib/safe-json";
 import { stashShareHandoff } from "@/lib/share-handoff";
 import type { SharePayload } from "@/lib/studio-history";
@@ -51,16 +51,16 @@ export default function ShareSlugPage() {
       {error ? (
         <>
           <p className="type-ui text-[#171618]">Share unavailable</p>
-          <p className="type-caption text-[#727578]">{error}</p>
+          <p className="type-caption text-[#5c5e60]">{error}</p>
           <a href="/" className="type-caption text-[#38296c] underline">
             Back to studio
           </a>
         </>
       ) : (
         <>
-          <Loader2 className="size-5 animate-spin text-[#171618]" />
+          <LoaderCircle className="size-5 animate-spin text-[#171618]" />
           <p className="type-ui text-[#171618]">Opening shared thumbnail…</p>
-          <p className="type-caption text-[#727578]">/{params.slug}</p>
+          <p className="type-caption text-[#5c5e60]">/{params.slug}</p>
         </>
       )}
     </main>

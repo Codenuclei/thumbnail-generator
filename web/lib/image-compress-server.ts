@@ -7,8 +7,9 @@ export async function compressBase64Server(
   mimeType = "image/png",
   options?: { maxWidth?: number; quality?: number }
 ): Promise<{ mimeType: string; data: string }> {
-  const maxWidth = options?.maxWidth ?? 1536;
-  const quality = options?.quality ?? 82;
+  // Smaller refs = faster Gemini uploads and fewer timeouts.
+  const maxWidth = options?.maxWidth ?? 1024;
+  const quality = options?.quality ?? 72;
 
   try {
     const input = Buffer.from(base64.replace(/^data:[^;]+;base64,/, ""), "base64");
@@ -29,10 +30,13 @@ export async function compressBase64Server(
 export async function compressAssetsForApi(
   assets: Array<{ mimeType: string; data: string; label?: string }>
 ): Promise<Array<{ mimeType: string; data: string; label?: string }>> {
-  const limited = assets.slice(0, 4);
+  const limited = assets.slice(0, 3);
   return Promise.all(
     limited.map(async (a) => {
-      const c = await compressBase64Server(a.data, a.mimeType);
+      const c = await compressBase64Server(a.data, a.mimeType, {
+        maxWidth: 1024,
+        quality: 72,
+      });
       return { ...a, mimeType: c.mimeType, data: c.data };
     })
   );

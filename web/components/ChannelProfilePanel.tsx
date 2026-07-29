@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Sparkles } from "lucide-react";
+import { LoaderCircle, Sparkles } from "lucide-react";
 import type { ChannelProfile } from "@/lib/channel-profile";
 
 type Props = {
@@ -30,12 +30,12 @@ export function ChannelProfilePanel({
   onClear,
 }: Props) {
   return (
-    <section className="min-w-0 space-y-4 overflow-hidden rounded-[20px] border border-[#efefef] bg-white p-5">
+    <section className="min-w-0 space-y-3 overflow-hidden">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="type-ui text-[#171618]">Main channel profile</h3>
-          <p className="mt-1 type-caption text-[#727578]">
-            Summarize recurring thumbnail language from public channel evidence.
+          <h3 className="type-ui text-[#171618]">Channel profile</h3>
+          <p className="mt-1 type-caption text-[#5c5e60]">
+            Optional. Recurring thumbnail language from public channel evidence.
           </p>
         </div>
         {profile && (
@@ -60,11 +60,11 @@ export function ChannelProfilePanel({
             onClick={onAnalyze}
             disabled={loading || !channelInput.trim()}
           >
-            {loading ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+            {loading ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
             Analyze
           </Button>
         </div>
-        <p className="type-caption text-[#727578]">
+        <p className="type-caption text-[#5c5e60]">
           Fetches public landscape videos directly from the channel URL or handle.
           {topic.trim() ? ` Topic context: ${topic.trim()}` : ""}
         </p>
@@ -74,7 +74,7 @@ export function ChannelProfilePanel({
         <div className="min-w-0 space-y-4 overflow-hidden rounded-[12px] border border-[#efefef] bg-[#f7f7f7] p-4">
           <div className="min-w-0">
             <p className="type-ui text-[#171618]">{profile.channelName}</p>
-            <p className="mt-2 type-ui font-normal leading-relaxed break-words text-[#727578]">
+            <p className="mt-2 type-ui font-normal leading-relaxed break-words text-[#5c5e60]">
               {profile.summary}
             </p>
           </div>
@@ -89,11 +89,11 @@ export function ChannelProfilePanel({
 
           <div className="grid min-w-0 gap-3 sm:grid-cols-2">
             <div className="min-w-0">
-              <Label className="text-xs text-[#727578]">Typography</Label>
+              <Label className="text-xs text-[#5c5e60]">Typography</Label>
               <p className="mt-1 text-sm break-words text-[#171618]">{profile.typography}</p>
             </div>
             <div className="min-w-0">
-              <Label className="text-xs text-[#727578]">Palette</Label>
+              <Label className="text-xs text-[#5c5e60]">Palette</Label>
               <div className="mt-1 flex min-w-0 flex-wrap gap-1.5">
                 {profile.colorPalette.map((color) => (
                   <span
@@ -109,8 +109,8 @@ export function ChannelProfilePanel({
 
           {profile.compositionPatterns.length > 0 && (
             <div className="min-w-0">
-              <Label className="text-xs text-[#727578]">Composition patterns</Label>
-              <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-[#727578]">
+              <Label className="text-xs text-[#5c5e60]">Composition patterns</Label>
+              <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-[#5c5e60]">
                 {profile.compositionPatterns.map((item) => (
                   <li key={item} className="break-words">
                     {item}
@@ -131,7 +131,7 @@ export function ChannelProfilePanel({
           )}
 
           <div className="min-w-0">
-            <Label className="text-xs text-[#727578]">Evidence thumbnails</Label>
+            <Label className="text-xs text-[#5c5e60]">Evidence thumbnails</Label>
             <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
               {profile.evidence.map((item) => (
                 <div
@@ -143,7 +143,7 @@ export function ChannelProfilePanel({
                     alt={item.title}
                     className="aspect-video w-full object-cover"
                   />
-                  <p className="line-clamp-2 break-words p-2 text-[11px] text-[#727578]">
+                  <p className="line-clamp-2 break-words p-2 text-[11px] text-[#5c5e60]">
                     {item.title}
                   </p>
                 </div>

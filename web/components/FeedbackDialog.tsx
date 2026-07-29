@@ -35,13 +35,13 @@ const COPY: Record<
 > = {
   like: {
     title: "What works here?",
-    description: "Optional — note composition, colors, or energy to keep. Like is already saved.",
+    description: "Optional. Note composition, colors, or energy to keep. Like is already saved.",
     placeholder: "e.g. bold hook left, warm factory glow, face cutout pops…",
     confirm: "Save note",
   },
   dislike: {
     title: "What’s off?",
-    description: "Optional — tell the pipeline what to avoid. Dislike is already saved.",
+    description: "Optional. Tell the pipeline what to avoid. Dislike is already saved.",
     placeholder: "e.g. too cluttered, cheap stock look, wrong niche…",
     confirm: "Save note",
   },
@@ -79,12 +79,12 @@ export function FeedbackDialog({
   return (
     <Dialog open={open && Boolean(mode && item)} onOpenChange={onOpenChange}>
       <DialogContent
-        className="gap-5 rounded-[16px] border border-[#efefef] bg-white p-6 shadow-[var(--shadow-subtle-3)] sm:max-w-lg"
+        className="gap-5 rounded-[20px] border border-[#efefef] bg-white p-6 shadow-[var(--shadow-subtle-3)] sm:max-w-lg"
         showCloseButton
       >
         <DialogHeader className="gap-2 pr-8">
           <DialogTitle className="type-subheading text-[#171618]">{copy.title}</DialogTitle>
-          <DialogDescription className="type-ui font-normal text-[#727578]">
+          <DialogDescription className="type-ui font-normal text-[#5c5e60]">
             {copy.description}
           </DialogDescription>
         </DialogHeader>
@@ -98,10 +98,10 @@ export function FeedbackDialog({
             />
             <div className="min-w-0 flex-1">
               <p className="truncate type-ui text-[#171618]">{item.channel}</p>
-              <p className="mt-0.5 line-clamp-2 type-ui font-normal text-[#727578]">
+              <p className="mt-0.5 line-clamp-2 type-ui font-normal text-[#5c5e60]">
                 {item.title}
               </p>
-              <p className="mt-1 type-caption text-[#727578]">
+              <p className="mt-1 type-caption text-[#5c5e60]">
                 {formatViews(item.viewCount)}
               </p>
             </div>

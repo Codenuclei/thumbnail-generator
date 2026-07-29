@@ -190,6 +190,7 @@ export function LayerEditorPanel({
             size="icon-sm"
             variant="outline"
             disabled={!history.past.length}
+            aria-label="Undo"
             onClick={() => onHistoryChange({ ...history, present: history.past[history.past.length - 1], past: history.past.slice(0, -1), future: [history.present, ...history.future] })}
           >
             <Undo2 className="size-3.5" />
@@ -198,6 +199,7 @@ export function LayerEditorPanel({
             size="icon-sm"
             variant="outline"
             disabled={!history.future.length}
+            aria-label="Redo"
             onClick={() => onHistoryChange({ ...history, present: history.future[0], past: [...history.past, history.present], future: history.future.slice(1) })}
           >
             <Redo2 className="size-3.5" />
@@ -285,8 +287,8 @@ export function LayerEditorPanel({
             </div>
           </div>
         ) : (
-          <p className="text-sm text-[#727578]">
-            Upload a reusable logo or watermark — stored in Cohesivity object storage.
+          <p className="text-sm text-[#5c5e60]">
+            Upload a reusable logo or watermark. Stored in Cohesivity object storage.
           </p>
         )}
       </section>
@@ -353,7 +355,7 @@ export function LayerEditorPanel({
       <section className="space-y-3">
         <Label>Layers</Label>
         {visibleLayers.length === 0 ? (
-          <p className="text-sm text-[#727578]">Add text, shapes, arrows, badges, or images.</p>
+          <p className="text-sm text-[#5c5e60]">Add text, shapes, arrows, badges, or images.</p>
         ) : (
           <div className="space-y-2">
             {visibleLayers.map((layer) => (
@@ -369,12 +371,18 @@ export function LayerEditorPanel({
                     <span className="truncate text-sm">{layer.name}</span>
                   </div>
                 </button>
-                <Button size="icon-xs" variant="ghost" onClick={() => updateLayer(layer.id, { visible: !layer.visible })}>
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  aria-label={layer.visible ? `Hide layer ${layer.name}` : `Show layer ${layer.name}`}
+                  onClick={() => updateLayer(layer.id, { visible: !layer.visible })}
+                >
                   {layer.visible ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
                 </Button>
                 <Button
                   size="icon-xs"
                   variant="ghost"
+                  aria-label={`Move layer ${layer.name} up`}
                   onClick={() =>
                     setDocument({ ...doc, layers: reorderLayer(doc.layers, layer.id, "up") })
                   }
@@ -384,6 +392,7 @@ export function LayerEditorPanel({
                 <Button
                   size="icon-xs"
                   variant="ghost"
+                  aria-label={`Move layer ${layer.name} down`}
                   onClick={() =>
                     setDocument({ ...doc, layers: reorderLayer(doc.layers, layer.id, "down") })
                   }
@@ -393,6 +402,7 @@ export function LayerEditorPanel({
                 <Button
                   size="icon-xs"
                   variant="ghost"
+                  aria-label={`Delete layer ${layer.name}`}
                   onClick={() => {
                     setDocument({ ...doc, layers: doc.layers.filter((l) => l.id !== layer.id) });
                     if (selectedLayerId === layer.id) onSelectLayer(null);
