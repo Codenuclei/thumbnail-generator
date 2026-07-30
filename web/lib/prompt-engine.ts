@@ -79,39 +79,39 @@ export function cameraFilterForIndex(index: number): CameraFilter {
 export const TYPOGRAPHY_VARIANTS = [
   {
     id: "impact-stroke",
-    label: "Impact heavy stroke",
+    label: "Impact clean fill",
     prompt:
-      "TYPE VARIANT — Impact / Arial Black energy, ALL CAPS, ultra-thick black outline + slight white kick, 2–4 words, bottom-left or lower third negative space. Clean single glyphs — no letter collisions, no ghosted second layer.",
+      "TYPE VARIANT — Impact / Arial Black energy, ALL CAPS, solid flat-color fill with a subtle soft drop shadow for lift (no hard outline), 2–4 words, bottom-left or lower third negative space. Clean single glyphs — no letter collisions, no ghosted second layer.",
   },
   {
     id: "bebas-stack",
     label: "Bebas clean stack",
     prompt:
-      "TYPE VARIANT — Bebas Neue / condensed sans, normal tracking (letters must not touch), Title Case or ALL CAPS, stacked 2 lines max, soft drop shadow (no thick comic outline), top-right or upper third.",
+      "TYPE VARIANT — Bebas Neue / condensed sans, normal tracking (letters must not touch), Title Case or ALL CAPS, stacked 2 lines max, soft drop shadow only (no outline at all), top-right or upper third.",
   },
   {
     id: "anton-banner",
     label: "Anton banner",
     prompt:
-      "TYPE VARIANT — Anton / Montserrat Black feel, wide ALL CAPS banner across mid-frame, high-contrast fill (light on dark plate or dark on light), thin hard stroke only. Even letter spacing; never squash or double-print the word.",
+      "TYPE VARIANT — Anton / Montserrat Black feel, wide ALL CAPS banner across mid-frame, high-contrast solid fill (light on dark plate or dark on light) with soft shadow for separation — no hard-edged outline stroke. Even letter spacing; never squash or double-print the word.",
   },
   {
     id: "compact-corner",
     label: "Compact corner punch",
     prompt:
-      "TYPE VARIANT — Condensed display sans (not ultra-crammed), 2–3 words, corner punch (top-left), bold fill with colored outline sampled from the palette — phone-readable, never thin, never overlapping letters.",
+      "TYPE VARIANT — Condensed display sans (not ultra-crammed), 2–3 words, corner punch (top-left), bold flat fill sampled from the palette with soft shadow lift, no outline stroke — phone-readable, never thin, never overlapping letters.",
   },
   {
     id: "editorial-caps",
     label: "Editorial caps",
     prompt:
-      "TYPE VARIANT — Clean bold condensed caps like premium documentary thumbs — medium-thick outline, comfortable letter spacing with clear air between glyphs, placed opposite the face/product.",
+      "TYPE VARIANT — Clean bold condensed caps like premium documentary thumbs — solid fill with a thin, single, perfectly even-width outline at most (skip it if it looks blotchy), comfortable letter spacing with clear air between glyphs, placed opposite the face/product.",
   },
   {
     id: "stacked-power",
     label: "Stacked power words",
     prompt:
-      "TYPE VARIANT — Two stacked power words (Impact energy), bottom-heavy placement, solid fill + heavy outline, each line a different visual weight (top slightly smaller). One clean render per line — no echo/ghost duplicates.",
+      "TYPE VARIANT — Two stacked power words (Impact energy), bottom-heavy placement, solid flat fill + soft drop shadow (no thick outline), each line a different visual weight (top slightly smaller). One clean render per line — no echo/ghost duplicates.",
   },
 ] as const;
 
@@ -125,14 +125,19 @@ export function typographyVariantForIndex(index: number): TypographyVariant {
 export const DEFAULT_MASTER_PROMPT = [
   "YouTube thumbnail, 16:9 landscape (1280×720 intent). No watermark, no channel logo unless supplied.",
   "QUALITY BAR: Compete with top YouTube thumbnails — one dominant focal point, extreme phone-readability at ~120px wide, high subject/background separation, intentional contrast.",
-  "TYPOGRAPHY (critical): Study hook lettering on any attached reference thumbs (weight, case, outline, placement). Then render THIS variant's distinct type treatment — bold condensed display sans (Impact / Arial Black / Bebas Neue / Montserrat Black / Anton energy). ALL CAPS or Title Case for 2–5 words max. Thick dark outline or soft drop shadow. Never thin, script, serif body, or tiny paragraphs. Variants must NOT share the same type look.",
+  "TYPOGRAPHY (critical): Study hook lettering on any attached reference thumbs (weight, case, placement) — but NEVER copy a heavy hard outline from a reference. Match font ENERGY closely — same general family/weight/case feel — then render it as a fresh, similar (never identical) interpretation using THIS variant's distinct type treatment — bold condensed display sans (Impact / Arial Black / Bebas Neue / Montserrat Black / Anton energy). ALL CAPS or Title Case for 2–5 words max. DEFAULT to solid flat-color fill + a soft drop shadow for lift — that alone is usually enough contrast. Only add a thin outline if the variant explicitly calls for one, and even then it must be a single, perfectly even-width line that hugs the glyph shape — never thick, never doubled, never blotchy. Never thin, script, serif body, or tiny paragraphs. FORBIDDEN TEXT STYLE: neon/glow tube-light letters, neon outline halos, cyberpunk glow text, or any glowing-sign lettering effect — text must read as solid, matte, printed display type, not a neon sign. Variants must NOT share the same type look.",
   "TEXT INTEGRITY (hard ban — reject messy type): Render the hook EXACTLY once as clean, sharp glyphs. FORBIDDEN: overlapping/colliding letters, mashed tracking, double-printed or ghosted/echo layers of the same word, smeared or melted strokes, stray fragments floating above glyphs, duplicated letter endings (e.g. AMAZONON), misspellings, extra characters, warped or stacked outlines that look like a glitch. Keep clear air between every letter so each glyph is fully legible at phone size. Prefer comfortable tracking over ultra-tight. One outline + one fill only — never a second offset copy of the word.",
-  "TEXT PLACEMENT: Hook text in the clearest negative space; never cover faces/eyes or the product's readable silhouette. One line preferred; two lines max.",
+  "SPELLING ACCURACY (hard ban on typos — verify before finalizing): Reproduce the hook text character-for-character exactly as given — same letters, same order, same word count. FORBIDDEN: dropped letters, added letters, swapped/transposed letters, merged words, split words, near-phonetic guesses, or auto-corrected substitutions. If the hook is long, shrink the type size or wrap to a second line rather than truncate, abbreviate, or misspell any word. Double-check every word reads as a real, correctly spelled match of the input before finishing.",
+  "NO EXCESS TEXT / NO DUPLICATE GENERATION (hard ban): Render ONLY the specified hook, in ONE place, ONE time. Do NOT invent extra captions, subtitles, taglines, timestamps, fake channel names/handles, fake subscribe buttons, fake view/like counts, or any other on-image text beyond the hook. Do NOT tile, mirror, or repeat the main subject/scene into multiple copies or a collage/grid layout — exactly one dominant subject in one continuous scene.",
+  "NO STRAY BORDER/LINE-STROKE ON TEXT (hard ban — this is the #1 recurring defect to avoid): The outline around hook letters, if any, must never look like a blotchy, uneven, cracked, doubled, or halo-like border traced around the glyphs — that reads as a defect, not a design choice. If a clean outline can't be rendered crisply, drop the outline entirely and use a plain solid fill with a soft drop shadow instead. Never let a stroke/outline bleed outward into a rectangular or rounded border shape around the whole word or the whole canvas.",
+  "TEXT PLACEMENT (hard ban — no incomplete placement): Hook text in the clearest negative space; never cover faces/eyes or the product's readable silhouette. The ENTIRE hook must sit fully inside the 16:9 frame with safe margin on every side — FORBIDDEN: letters or words cut off/cropped by the canvas edge, text bleeding off-frame, partially rendered or half-visible words, or a hook that only half-fits and trails off. If it doesn't fit cleanly, shorten the line or drop to a second line rather than crop it. One line preferred; two lines max.",
+  "NO BORDER / FRAME (hard ban — reject even if a reference has one): The photo must fill the entire 16:9 canvas edge-to-edge with zero decorative framing. FORBIDDEN: a colored border/frame around the outside edge, a picture-frame or comic-panel outline, a rounded-corner card/bezel look, a vignette ring, a drop-shadow box around the whole image, browser-chrome/screenshot bezels, or any stroke/line running along the canvas edges. Also forbidden: random decorative scribble/doodle stroke marks, hand-drawn underline squiggles, or comic-style speed lines scattered across the scene that are not part of the hook text itself. If a reference/liked thumbnail happens to have a border or frame, that is exactly the one thing to leave out — study its fonts/color/layout only, never its framing.",
   "CAMERA: Real-lens language (35–50mm equivalent, shallow DOF when it helps). Prefer photographic light over CGI. Mild grain OK; no plastic skin, no neon HUD, no Unreal/Octane look.",
   "WHITE BALANCE (critical): Neutral daylight / cool-LED lighting only. Whites must stay white; metals silver/steel. FORBIDDEN: odd yellow/amber/orange glow, golden-hour wash, tungsten spill, sodium-vapor haze, sepia cast, orange rim lights, cinematic orange-teal grade, lens-flare blobs.",
   "COMPOSITION: One story beat. Face or hero object large. Environment supports topic — do not clutter with unrelated props. Apply classic framing factors ONLY when they fit the scene; never force them.",
   "COLOR: Punchy but intentional — 2–4 dominant colors, strong subject vs background contrast. Avoid muddy mid-grays, random neon rainbows, and forcing measured swatches when they hurt readability.",
   "USER MEDIA RULE: If photos/frames are attached, intelligently choose ONE primary contribution — a person likeness, a product/object, OR a background/plate — whichever best serves the topic and hook. Do NOT paste the entire source frame as the thumbnail unless it already is a strong thumb. Do NOT invent faces/products that contradict supplied media.",
+  "NO 1:1 REPLICA RULE (hard ban): Reference/liked/seed thumbnails are inspiration for fonts, palette, and layout ENERGY only — never a template to reproduce. The final image must NEVER be an exact, near-identical, or pixel-level copy of any single reference thumbnail (same subject pose, same crop, same background, same text placement all at once counts as a replica). Change at least the composition, subject staging, camera angle, or framing enough that it reads as a new, original thumbnail clearly inspired by — not cloned from — the references. This applies even when only one reference/seed image is attached.",
   "ANTI-AI-SLOP: No hyperrealistic/8k/masterpiece bait, no glowing sci-fi UI, no perfect symmetry, no stock-photo smiles, no unrelated celebrity faces, no mystery yellow glow on factories/cleanrooms.",
   "Professional click energy: curiosity + clarity, zero cheap spam, zero illegible text.",
 ].join("\n");
@@ -304,9 +309,9 @@ export function buildUltraPrompt(
 
   if (hook) {
     lines.push(
-      `Bold hook text (phone-readable, 2–5 words) — spell EXACTLY, no extra letters: "${hook}"`,
+      `Bold hook text (phone-readable, 2–5 words) — spell EXACTLY, letter-for-letter, no extra/missing/swapped letters, no auto-correcting to a different word: "${hook}"`,
       "Render the hook using THIS variant's type treatment above. Match lettering energy from attached reference thumbs when present, but keep this variant's distinct font/layout so siblings look different.",
-      "HARD TEXT RULE: One clean pass of the words only. No overlapping letters, no ghost/echo duplicate layer, no melted strokes, no duplicated endings. Every character must be separate and readable."
+      "HARD TEXT RULE: One clean pass of the words only, rendered exactly ONCE in ONE place. No overlapping letters, no ghost/echo duplicate layer, no melted strokes, no duplicated endings, no second copy of the hook anywhere else in frame, no extra invented captions/subtitles/labels. Every character must be separate, readable, and correctly spelled. If you cannot render a crisp, even outline, skip the outline and use a plain solid fill with soft shadow instead — a blotchy/uneven border-like stroke around the letters is worse than no outline."
     );
   } else {
     // Empty Hook field = intentional. Never invent on-thumb copy from the video title / topic.
@@ -345,8 +350,8 @@ export function buildUltraPrompt(
     if (options.styleBrief.typography) {
       if (hook) {
         lines.push(
-          `REFERENCE TYPOGRAPHY from selected/liked thumbs (study & adapt — weight, case, outline, placement): ${options.styleBrief.typography}`,
-          "Ground THIS variant's type in that reference language, then apply the TYPE VARIANT above so outputs are visibly different from sibling variants."
+          `REFERENCE TYPOGRAPHY from selected/liked thumbs (study & adapt — weight, case, placement ONLY, never the outline/stroke treatment): ${options.styleBrief.typography}`,
+          "Ground THIS variant's type in that reference language, then apply the TYPE VARIANT above so outputs are visibly different from sibling variants. No neon/glow lettering, and keep the full hook inside the frame — no cropped or incomplete words. Default to a clean solid fill + soft shadow; only add a thin, perfectly even outline if it will render crisply — a blotchy/uneven outline is a defect, not a style."
         );
       } else {
         lines.push(
@@ -381,7 +386,8 @@ export function buildUltraPrompt(
       );
     } else if (hook) {
       lines.push(
-        `STRONGLY match patterns from user-liked references — especially hook FONTS (weight, case, outline) and layout: ${likedRefs}`
+        `STRONGLY match patterns from user-liked references — especially hook FONTS (weight, case) and layout: ${likedRefs}`,
+        "Match the font energy closely but render it fresh — no neon/glow text, no cropped/incomplete lettering, no copied outline/stroke treatment (default to clean solid fill + soft shadow), and the final image must not be a 1:1 replica of any single liked reference."
       );
     } else {
       lines.push(

@@ -25,6 +25,8 @@ export type StudioSession = {
   model: string;
   imageSize: string;
   masterPrompt: string;
+  /** True only if the user manually edited the master prompt textarea. When false/absent, callers should re-sync to the current DEFAULT_MASTER_PROMPT instead of trusting this stored (possibly stale) string. */
+  masterPromptCustomized?: boolean;
   compositionFactors: string[];
   useOpeningFrames: boolean;
   image: string | null;
@@ -55,6 +57,7 @@ export type StudioDraft = {
   model: string;
   imageSize: string;
   masterPrompt: string;
+  masterPromptCustomized?: boolean;
   compositionFactors: string[];
   useOpeningFrames: boolean;
   mediaYoutubeUrl?: string;
@@ -155,6 +158,7 @@ export type SharePayload = {
   model: string;
   imageSize: string;
   masterPrompt: string;
+  masterPromptCustomized?: boolean;
   compositionFactors: string[];
   useOpeningFrames: boolean;
   image: string | null;
@@ -181,6 +185,7 @@ export function buildSharePayload(session: Omit<StudioSession, "id" | "createdAt
     model: session.model,
     imageSize: session.imageSize,
     masterPrompt: session.masterPrompt,
+    masterPromptCustomized: session.masterPromptCustomized,
     compositionFactors: session.compositionFactors,
     useOpeningFrames: session.useOpeningFrames,
     image: session.image,

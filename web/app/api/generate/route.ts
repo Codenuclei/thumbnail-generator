@@ -160,7 +160,7 @@ export async function POST(req: NextRequest) {
       iterationIndex,
     });
 
-    // Iteration: single image edit — compress payloads to stay under Vercel body limits
+    // Iteration: single image edit — compress payloads to keep requests small and fast
     if (iterationNote) {
       const compressedBase = baseImage
         ? await compressBase64Server(baseImage, "image/png")

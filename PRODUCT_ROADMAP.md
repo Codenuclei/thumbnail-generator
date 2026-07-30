@@ -16,7 +16,7 @@ Pipeline UI.
 ### Unified media ingest — done
 
 - Accept a local video, reference photos, a YouTube URL, and a pasted script.
-- Keep video decoding in the browser so Vercel never receives the source video.
+- Keep video decoding in the browser so the server never receives the raw source video.
 - Preserve analysis inputs and compact results in draft/history state.
 
 ### Video script — done

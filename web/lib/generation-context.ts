@@ -106,7 +106,7 @@ export function buildGenerationContextBlock(input: GenerationContextInput): stri
 
   if (input.selectedRefCount && input.selectedRefCount > 0) {
     lines.push(
-      `${input.selectedRefCount} research thumbnail(s) selected — study attached reference images for fonts and composition.`
+      `${input.selectedRefCount} research thumbnail(s) selected — study attached reference images for fonts (match weight/case/energy, no neon glow, no cropped letters) and composition. Do NOT copy the reference's outline/stroke treatment on letters — default to solid fill + soft shadow, only add a thin even outline if it renders crisply (a blotchy/uneven outline is a defect). Never reproduce a reference 1:1 — output must be a new, similar-but-distinct image. Ignore any border/frame/vignette edge or decorative doodle stroke a reference may have — never carry that into the output.`
     );
   }
 
@@ -142,7 +142,9 @@ export function buildGenerationContextBlock(input: GenerationContextInput): stri
   }
 
   lines.push(
-    "SETTING RULE: Thumbnail environment must match topic context and media evidence. Never substitute a wrong venue (e.g. outdoor track for indoor HYROX, factory sodium glow for cleanroom)."
+    "SETTING RULE: Thumbnail environment must match topic context and media evidence. Never substitute a wrong venue (e.g. outdoor track for indoor HYROX, factory sodium glow for cleanroom).",
+    "ORIGINALITY RULE: References/seed are style + font guidance only. The output must never be an exact or near-1:1 replica of any single reference or seed thumbnail — always vary composition/staging/framing enough to be a new, similar-but-distinct image.",
+    "NO BORDER/FRAME RULE: The image must fill the entire 16:9 canvas edge-to-edge — no colored border, picture-frame outline, vignette ring, rounded-card bezel, or decorative stroke/scribble line anywhere near the canvas edges, even if a reference or seed has one."
   );
 
   return lines.filter(Boolean).join("\n");

@@ -1,4 +1,4 @@
-/** Max JPEG width sent to /api/generate (keeps JSON under Vercel ~4.5MB limit). */
+/** Max JPEG width sent to /api/generate (keeps request payloads small and fast over the wire). */
 export const CLIENT_MAX_IMAGE_WIDTH = 1280;
 export const CLIENT_JPEG_QUALITY = 0.82;
 export const MAX_EDIT_ASSETS = 4;

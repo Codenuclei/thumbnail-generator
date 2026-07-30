@@ -125,7 +125,7 @@ const IMAGE_SIZES = [
   { value: "4K", label: "4K Ultra (slow)" },
 ];
 
-/** Fallback slice only if browser decode fails — Vercel body limit. */
+/** Fallback slice only if browser decode fails — keeps the upload request body small. */
 const VIDEO_UPLOAD_SLICE_BYTES = 4 * 1024 * 1024;
 
 // Force dynamic rendering so the root shell is never edge/CDN-cached across
@@ -187,6 +187,10 @@ export default function Home() {
   const [generatedVariants, setGeneratedVariants] = useState<GeneratedVariant[]>([]);
   const [generatingSimilarId, setGeneratingSimilarId] = useState<string | null>(null);
   const [masterPrompt, setMasterPrompt] = useState(DEFAULT_MASTER_PROMPT);
+  // Tracks whether the USER hand-edited the master prompt. Stale drafts/sessions saved
+  // before a prompt-quality fix (e.g. anti-border, anti-neon rules) must never silently
+  // override the current DEFAULT_MASTER_PROMPT — only intentional edits should persist.
+  const [masterPromptCustomized, setMasterPromptCustomized] = useState(false);
   const [useOpeningFrames, setUseOpeningFrames] = useState(false);
   const [openingFrames, setOpeningFrames] = useState<OpeningFrameClip[]>([]);
   const [compositionFactors, setCompositionFactors] = useState<string[]>([
@@ -254,7 +258,7 @@ export default function Home() {
     });
 
     try {
-      // 1) Store full video on Cohesivity object storage (chunked — bypasses Vercel body limit).
+      // 1) Store full video on Cohesivity object storage (chunked upload keeps request bodies small).
       let storageUrl: string | undefined = options?.storageUrl;
       let storagePath: string | undefined = options?.storagePath;
 
@@ -825,7 +829,15 @@ export default function Home() {
       setComposition(draft.composition);
       setModel(draft.model);
       setImageSize(draft.imageSize);
-      setMasterPrompt(draft.masterPrompt);
+      // Only restore a saved master prompt if the user actually customized it — otherwise
+      // stay on the current DEFAULT_MASTER_PROMPT so quality/safety fixes always apply.
+      if (draft.masterPromptCustomized && draft.masterPrompt) {
+        setMasterPrompt(draft.masterPrompt);
+        setMasterPromptCustomized(true);
+      } else {
+        setMasterPrompt(DEFAULT_MASTER_PROMPT);
+        setMasterPromptCustomized(false);
+      }
       setCompositionFactors(draft.compositionFactors);
       setUseOpeningFrames(draft.useOpeningFrames);
       setMediaYoutubeUrl(draft.mediaYoutubeUrl || "");
@@ -897,6 +909,7 @@ export default function Home() {
       model,
       imageSize,
       masterPrompt,
+      masterPromptCustomized,
       compositionFactors,
       useOpeningFrames,
       mediaYoutubeUrl,
@@ -915,6 +928,7 @@ export default function Home() {
     model,
     imageSize,
     masterPrompt,
+    masterPromptCustomized,
     compositionFactors,
     useOpeningFrames,
     mediaYoutubeUrl,
@@ -980,6 +994,7 @@ export default function Home() {
       model,
       imageSize,
       masterPrompt,
+      masterPromptCustomized,
       compositionFactors,
       useOpeningFrames,
       image: imageSmall,
@@ -1050,7 +1065,13 @@ export default function Home() {
     setComposition(payload.composition);
     setModel(payload.model);
     setImageSize(payload.imageSize);
-    setMasterPrompt(payload.masterPrompt);
+    if (payload.masterPromptCustomized && payload.masterPrompt) {
+      setMasterPrompt(payload.masterPrompt);
+      setMasterPromptCustomized(true);
+    } else {
+      setMasterPrompt(DEFAULT_MASTER_PROMPT);
+      setMasterPromptCustomized(false);
+    }
     setCompositionFactors(payload.compositionFactors);
     setUseOpeningFrames(payload.useOpeningFrames);
     setImage(payload.image);
@@ -1098,7 +1119,13 @@ export default function Home() {
     setComposition(session.composition);
     setModel(session.model);
     setImageSize(session.imageSize);
-    setMasterPrompt(session.masterPrompt);
+    if (session.masterPromptCustomized && session.masterPrompt) {
+      setMasterPrompt(session.masterPrompt);
+      setMasterPromptCustomized(true);
+    } else {
+      setMasterPrompt(DEFAULT_MASTER_PROMPT);
+      setMasterPromptCustomized(false);
+    }
     setCompositionFactors(session.compositionFactors);
     setUseOpeningFrames(session.useOpeningFrames);
     setImage(session.image);
@@ -2508,7 +2535,10 @@ export default function Home() {
                   type="button"
                   variant="ghost"
                   size="sm"
-                  onClick={() => setMasterPrompt(DEFAULT_MASTER_PROMPT)}
+                  onClick={() => {
+                    setMasterPrompt(DEFAULT_MASTER_PROMPT);
+                    setMasterPromptCustomized(false);
+                  }}
                 >
                   Reset default
                 </Button>
@@ -2516,7 +2546,10 @@ export default function Home() {
               <Textarea
                 id="master-prompt"
                 value={masterPrompt}
-                onChange={(e) => setMasterPrompt(e.target.value)}
+                onChange={(e) => {
+                  setMasterPrompt(e.target.value);
+                  setMasterPromptCustomized(true);
+                }}
                 rows={6}
                 className="min-h-[120px] resize-y type-ui font-normal leading-relaxed"
                 placeholder="Master quality prompt used for every generation…"

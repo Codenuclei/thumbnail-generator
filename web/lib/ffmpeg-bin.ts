@@ -8,11 +8,22 @@ const execFileAsync = promisify(execFile);
 
 let cached: string | null | undefined;
 
-/** Resolve ffmpeg: bundled static binary (Vercel) or system PATH (local dev). */
+/** Resolve ffmpeg: FFMPEG_PATH env (Railway container), bundled static binary, or system PATH (local dev). */
 export async function resolveFfmpegPath(): Promise<string | null> {
   if (cached !== undefined) return cached;
 
-  // 1) ffmpeg-static (bundled for Vercel via outputFileTracingIncludes)
+  // 0) Explicit path from env (set to /usr/bin/ffmpeg in the Railway Dockerfile)
+  if (process.env.FFMPEG_PATH) {
+    try {
+      await access(process.env.FFMPEG_PATH);
+      cached = process.env.FFMPEG_PATH;
+      return cached;
+    } catch {
+      // fall through
+    }
+  }
+
+  // 1) ffmpeg-static (bundled binary, used when no system ffmpeg is present)
   if (ffmpegStatic) {
     try {
       await access(ffmpegStatic);
