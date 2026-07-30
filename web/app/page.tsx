@@ -217,7 +217,6 @@ export default function Home() {
   );
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   const videoFilesRef = useRef<Map<string, File>>(new Map());
-  const paletteAutoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const readyOpeningFrames = useMemo(
     () => openingFrames.filter((f) => f.status === "ready"),
@@ -1313,20 +1312,6 @@ export default function Home() {
     if (livePipeline) setPipeline(livePipeline);
   }, [livePipeline]);
 
-  useEffect(() => {
-    if (likedVideos.length === 0 || palettes.length > 0 || suggestingPalettes) return;
-    if (normalizeStudioTab(studioTab) !== "research") return;
-
-    if (paletteAutoTimerRef.current) clearTimeout(paletteAutoTimerRef.current);
-    paletteAutoTimerRef.current = setTimeout(() => {
-      void suggestPalettes(undefined, undefined, undefined, { silent: true });
-    }, 800);
-
-    return () => {
-      if (paletteAutoTimerRef.current) clearTimeout(paletteAutoTimerRef.current);
-    };
-  }, [likedVideos.length, palettes.length, suggestingPalettes, studioTab]);
-
   async function handleResearch() {
     if (!topic.trim()) return;
 
@@ -1550,9 +1535,11 @@ export default function Home() {
     const current = normalizeStudioTab(studioTab);
     setStudioTab(next);
 
-    const enteringStyle = next === "style" && current !== "style";
+    // Only pick colors once the user is done liking refs and heads into Generate —
+    // never react per-like while they're still browsing/liking on Research or Style.
+    const enteringGenerate = next === "generate" && current !== "generate";
     if (
-      enteringStyle &&
+      enteringGenerate &&
       likedVideos.length > 0 &&
       !palettes.length &&
       !suggestingPalettes
@@ -1599,7 +1586,7 @@ export default function Home() {
     // Like / dislike apply immediately so button state updates right away
     applyRating(item.videoId, mode, existingComment);
     if (mode === "like") {
-      toast.success("Liked — palettes suggest automatically when you continue");
+      toast.success("Liked — palettes suggest automatically once you head to Generate");
     } else {
       toast.success("Disliked");
     }
@@ -2459,8 +2446,8 @@ export default function Home() {
                   <div className="flex flex-wrap items-center gap-2 border-t border-[#efefef] pt-3">
                     <p className="type-caption text-[var(--text-tertiary)]">
                       {palettes.length > 0
-                        ? "Palettes ready — continue to Style or refresh for new options."
-                        : "Done selecting? Continue to Style — palettes suggest automatically."}
+                        ? "Palettes ready — continue to Generate or refresh for new options."
+                        : "Done selecting? Head to Generate — palettes suggest automatically in the background."}
                     </p>
                     {palettes.length > 0 ? (
                       <Button

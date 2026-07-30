@@ -83,7 +83,7 @@ const TABS: Array<{
     countKey: "refs",
     optional: true,
     description:
-      "Optional reference thumbs. Like what you want — palettes suggest automatically when you continue to Style.",
+      "Optional reference thumbs. Like what you want — palettes suggest automatically in the background once you head to Generate.",
   },
   {
     value: "style",
