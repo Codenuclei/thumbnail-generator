@@ -144,7 +144,8 @@ export function buildGenerationContextBlock(input: GenerationContextInput): stri
   lines.push(
     "SETTING RULE: Thumbnail environment must match topic context and media evidence. Never substitute a wrong venue (e.g. outdoor track for indoor HYROX, factory sodium glow for cleanroom).",
     "ORIGINALITY RULE: References/seed are style + font guidance only. The output must never be an exact or near-1:1 replica of any single reference or seed thumbnail — always vary composition/staging/framing enough to be a new, similar-but-distinct image.",
-    "NO BORDER/FRAME RULE: The image must fill the entire 16:9 canvas edge-to-edge — no colored border, picture-frame outline, vignette ring, rounded-card bezel, or decorative stroke/scribble line anywhere near the canvas edges, even if a reference or seed has one."
+    "NO BORDER/FRAME RULE: The image must fill the entire 16:9 canvas edge-to-edge — no colored border, picture-frame outline, vignette ring, rounded-card bezel, or decorative stroke/scribble line anywhere near the canvas edges, even if a reference or seed has one.",
+    "NO TEXT BACKDROP RULE: Hook text sits directly on the photo — never on a solid/semi-transparent color box, bar, ribbon, banner, or rounded 'plate' behind the letters. Use placement + soft shadow for contrast, not a colored block."
   );
 
   return lines.filter(Boolean).join("\n");
