@@ -106,7 +106,7 @@ export function buildGenerationContextBlock(input: GenerationContextInput): stri
 
   if (input.selectedRefCount && input.selectedRefCount > 0) {
     lines.push(
-      `${input.selectedRefCount} research thumbnail(s) selected — study attached reference images for fonts (match weight/case/energy, no neon glow, no cropped letters) and composition. Do NOT copy the reference's outline/stroke treatment on letters — default to solid fill + soft shadow, only add a thin even outline if it renders crisply (a blotchy/uneven outline is a defect). Never reproduce a reference 1:1 — output must be a new, similar-but-distinct image. Ignore any border/frame/vignette edge or decorative doodle stroke a reference may have — never carry that into the output.`
+      `${input.selectedRefCount} research thumbnail(s) selected — study attached reference images for fonts (match weight/case/energy, no neon glow, no cropped letters) and composition. Do NOT copy the reference's outline/stroke treatment on letters — solid fill + soft shadow ONLY, zero outline of any width (any stroke around glyphs is a defect). Never reproduce a reference 1:1 — output must be a new, similar-but-distinct image. Ignore any border/frame/vignette edge or decorative doodle stroke a reference may have — never carry that into the output.`
     );
   }
 

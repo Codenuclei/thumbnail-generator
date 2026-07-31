@@ -79,6 +79,9 @@ type Props = {
   onPickVariant?: (variant: GeneratedVariant) => void;
   onGenerateSimilar?: (variant: GeneratedVariant) => void;
   generatingSimilarId?: string | null;
+  /** Ratings for generated variants (like / dislike → dry.md learning). */
+  variantRatings?: Record<string, "like" | "dislike" | null>;
+  onRateVariant?: (variant: GeneratedVariant, rating: "like" | "dislike") => void;
   paletteColors?: string[];
   paletteName?: string;
 };
@@ -136,6 +139,8 @@ export function GenerationCanvas({
   onPickVariant,
   onGenerateSimilar,
   generatingSimilarId = null,
+  variantRatings = {},
+  onRateVariant,
   paletteColors = [],
   paletteName,
 }: Props) {
@@ -158,6 +163,7 @@ export function GenerationCanvas({
     const active = image === v.image;
     const title = v.suggestedTitle || v.label;
     const similarBusy = generatingSimilarId === v.id;
+    const rating = variantRatings[v.id];
     return (
       <div
         key={v.id}
@@ -203,21 +209,49 @@ export function GenerationCanvas({
             </div>
           </div>
         </button>
-        {onGenerateSimilar && (
-          <div className="border-t border-[#efefef] bg-white px-2.5 py-2">
+        <div className="flex gap-1.5 border-t border-[#efefef] bg-white px-2.5 py-2">
+          {onRateVariant && (
+            <>
+              <Button
+                type="button"
+                size="sm"
+                variant={rating === "like" ? "default" : "outline"}
+                className="flex-1 rounded-[var(--radius-buttons)]"
+                disabled={loading}
+                onClick={() => onRateVariant(v, "like")}
+                aria-label="Like variant"
+              >
+                <ThumbsUp className="size-3.5" />
+                Like
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={rating === "dislike" ? "secondary" : "outline"}
+                className="flex-1 rounded-[var(--radius-buttons)]"
+                disabled={loading}
+                onClick={() => onRateVariant(v, "dislike")}
+                aria-label="Dislike variant"
+              >
+                <ThumbsDown className="size-3.5" />
+                Dislike
+              </Button>
+            </>
+          )}
+          {onGenerateSimilar && (
             <Button
               type="button"
               size="sm"
               variant="outline"
-              className="w-full rounded-[var(--radius-buttons)]"
+              className="flex-1 rounded-[var(--radius-buttons)]"
               disabled={loading || similarBusy}
               onClick={() => onGenerateSimilar(v)}
             >
               <Sparkles className={`size-3.5 ${similarBusy ? "animate-spin" : ""}`} />
-              {similarBusy ? "Generating…" : "Similar variants"}
+              {similarBusy ? "…" : "Similar"}
             </Button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     );
   };

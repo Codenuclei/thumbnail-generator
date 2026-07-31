@@ -6,8 +6,8 @@ import {
 } from "@/lib/prompt-engine";
 import {
   DEFAULT_VARIANT_COUNT,
-  generateThumbnail,
   generateThumbnailVariants,
+  generateWithVerification,
 } from "@/lib/generate";
 import { buildPipelineOverview } from "@/lib/pipeline-overview";
 import {
@@ -31,7 +31,9 @@ import { runtimeEnv } from "@/lib/runtime-env";
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
-const VARIANT_COMPOSITIONS = ["center", "cutout", "split", "data"] as const;
+// Auto mode sticks to single-scene layouts — split/data collages only render
+// when the user explicitly picks them (they read as odd, disjointed thumbs).
+const VARIANT_COMPOSITIONS = ["center", "cutout"] as const;
 const COMPOSITION_LAYOUT_LABELS: Record<string, string> = {
   center: "Center hero",
   cutout: "Cutout + scene",
@@ -192,7 +194,11 @@ export async function POST(req: NextRequest) {
         selectedPalette,
         selectedRefCount: selectedIds.size,
       });
-      const result = await generateThumbnail(prompt, model, [], imageSize, false, allAssets, 90_000);
+      const result = await generateWithVerification(
+        prompt,
+        { hook: hook ?? "", topic, maxRepairs: 1, allowSplit: composition === "split" },
+        { model, imageSize, assets: allAssets, budgetMs: 150_000 }
+      );
       return NextResponse.json({
         image: result.imageBase64,
         images: [
@@ -202,6 +208,7 @@ export async function POST(req: NextRequest) {
             label: `Iteration ${iterationIndex || 2}`,
             paletteId: selectedPalette?.id,
             composition: composition || "auto",
+            verification: result.verification,
           },
         ],
         backend: result.backend,
@@ -356,6 +363,9 @@ export async function POST(req: NextRequest) {
       // Parallel 1K batch needs wall-clock room for 3 variants + titles.
       // 4×1K parallel needs headroom under maxDuration 300s + client 240s.
       budgetMs: imageSize === "1K" ? 200_000 : imageSize === "2K" ? 220_000 : 260_000,
+      // LLM-ops QA loop: every variant is OCR'd + typography-scored by a
+      // vision model; failures regenerate once with a targeted repair note.
+      verify: { hook: hook ?? "", topic, maxRepairs: 1 },
     });
 
     if (!images.length) {
@@ -428,6 +438,18 @@ export async function POST(req: NextRequest) {
       console.warn(`Only ${enriched.length}/${variantCount} variants succeeded`);
     }
 
+    const verified = enriched.filter((img) => img.verification);
+    const qaStats = {
+      verified: verified.length,
+      passed: verified.filter((img) => img.verification?.verdict === "pass").length,
+      repaired: verified.filter((img) => (img.verification?.attempts || 1) > 1).length,
+    };
+    if (verified.length) {
+      console.log(
+        `Thumbnail QA: ${qaStats.passed}/${qaStats.verified} passed, ${qaStats.repaired} repaired`
+      );
+    }
+
     return NextResponse.json({
       image: enriched[0].image,
       images: enriched,
@@ -437,6 +459,7 @@ export async function POST(req: NextRequest) {
       promptPreview: variantSpecs[0].prompt.slice(0, 500),
       openingFramesUsed: openingAssets.length,
       variantStats: { requested: variantCount, succeeded: enriched.length },
+      qaStats,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Generation failed";

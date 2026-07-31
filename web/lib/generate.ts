@@ -1,4 +1,9 @@
 import { runtimeEnv } from "@/lib/runtime-env";
+import {
+  buildRepairPromptBlock,
+  verifyThumbnailImage,
+  type ThumbnailVerification,
+} from "@/lib/thumbnail-verify";
 
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-image";
@@ -74,7 +79,23 @@ export type VariantImage = {
   compositionFactorLabel?: string;
   suggestedTitle?: string;
   backend: string;
+  /** LLM-ops QA result for the delivered attempt (undefined when QA disabled). */
+  verification?: ThumbnailVerification & { attempts: number };
 };
+
+/** Enables the generate → verify → repair loop on each variant. */
+export type VerifyLoopOptions = {
+  /** Exact hook text expected on the image; "" = image must be text-free. */
+  hook: string;
+  topic: string;
+  /** Regeneration attempts after a QA failure (default 1). */
+  maxRepairs?: number;
+  /** True when the split-panel composition was explicitly requested. */
+  allowSplit?: boolean;
+};
+
+/** Minimum budget left to bother launching a verify + repair cycle. */
+const QA_MIN_BUDGET_MS = 40_000;
 
 function extractImageBuffer(data: Record<string, unknown>): Buffer | null {
   const candidates = (data.candidates as Array<Record<string, unknown>>) || [];
@@ -95,7 +116,7 @@ function assetInstruction(asset: ImageAsset): string {
     return `KEY SOURCE STILL — "${asset.label || "video still"}". Use this as a plate: pull the best person, object, OR background for a YouTube thumbnail. Crop/reframe freely; do not force a full-frame paste. Keep real likeness/product identity if that element is chosen. Do not swap in a different invented person/product.`;
   }
   if (asset.role === "reference") {
-    return `REFERENCE ONLY — "${asset.label || "ref"}". Study its hook FONTS (weight, case, placement) and match that energy closely, but render as a fresh, similar (never identical) type treatment — no neon/glow text effects, and keep the full hook inside the frame with no cropped/incomplete letters. Do NOT copy its outline/stroke treatment on the letters — default to a clean solid fill + soft drop shadow; only add a thin, perfectly even outline if it will render crisply (a blotchy, uneven, or doubled outline is a defect, not a style, and is the #1 recurring flaw to avoid). Study its color mood and layout only. Do not copy its subject over the user's media. Do NOT reproduce this reference image itself — the output must be a visibly different, original composition, not a near-copy or 1:1 replica of it. If this reference has a decorative border/frame/vignette around its edges or stray doodle stroke lines, ignore that completely — never carry a border, frame, or scribble stroke into the output; the output must fill the full canvas edge-to-edge with no framing.`;
+    return `REFERENCE ONLY — "${asset.label || "ref"}". Study its hook FONTS (weight, case, placement) and match that energy closely, but render as a fresh, similar (never identical) type treatment — no neon/glow text effects, and keep the full hook inside the frame with no cropped/incomplete letters. Do NOT copy its outline/stroke treatment on the letters — clean solid fill + soft drop shadow ONLY, zero outline of any width (any stroke traced around glyphs is a defect, not a style, and is the #1 recurring flaw to avoid). Study its color mood and layout only. Do not copy its subject over the user's media. Do NOT reproduce this reference image itself — the output must be a visibly different, original composition, not a near-copy or 1:1 replica of it. If this reference has a decorative border/frame/vignette around its edges or stray doodle stroke lines, ignore that completely — never carry a border, frame, or scribble stroke into the output; the output must fill the full canvas edge-to-edge with no framing.`;
   }
   if (asset.role === "seed") {
     return `GENERATED VARIANT SEED — "${asset.label || "variant seed"}". This is a prior output the user liked. Generate a sibling in the same story direction — match palette energy, subject scale, hook placement, and venue. Vary camera look and type variant per prompt. Improve phone-readability; do not pixel-copy. The result must NOT be a 1:1 replica of this seed image — change composition, staging, or framing enough that it is a new, similar-but-distinct thumbnail. No border/frame around the canvas edges.`;
@@ -261,6 +282,89 @@ export async function generateThumbnail(
   }
 }
 
+/**
+ * Closed-loop generation: render → vision-QA → targeted repair retry.
+ * Keeps the best-scoring attempt so QA can only improve the delivered image.
+ * Fail-open: QA errors deliver the image unverified rather than blocking.
+ */
+export async function generateWithVerification(
+  prompt: string,
+  verify: VerifyLoopOptions,
+  options: {
+    model?: string;
+    imageSize?: "1K" | "2K" | "4K";
+    assets?: ImageAsset[];
+    budgetMs?: number;
+  }
+): Promise<GenerateResult & { verification?: VariantImage["verification"] }> {
+  const started = Date.now();
+  const budgetMs = options.budgetMs ?? 120_000;
+  const budgetLeft = () => Math.max(0, budgetMs - (Date.now() - started));
+  const maxRepairs = verify.maxRepairs ?? 1;
+
+  let best:
+    | (GenerateResult & { verification: ThumbnailVerification; attempts: number })
+    | null = null;
+  let prompt_ = prompt;
+
+  // Correct hook always outranks a wrong one; verdict outranks raw score.
+  const rank = (v: ThumbnailVerification) =>
+    (v.verdict === "pass" ? 4000 : 0) + (v.hookExact ? 2000 : 0) + v.score;
+
+  for (let attempt = 1; attempt <= maxRepairs + 1; attempt++) {
+    const result = await generateThumbnail(
+      prompt_,
+      options.model,
+      [],
+      options.imageSize || "1K",
+      false,
+      options.assets || [],
+      // Reserve room for the verify call after this render.
+      Math.max(10_000, budgetLeft() - 15_000)
+    );
+
+    if (budgetLeft() < 20_000) {
+      // No time to verify — ship what we have (prefer a previous verified pass).
+      return best && best.verification.verdict === "pass"
+        ? { ...best, verification: { ...best.verification, attempts: best.attempts } }
+        : { ...result, verification: undefined };
+    }
+
+    const verification = await verifyThumbnailImage({
+      imageBase64: result.imageBase64,
+      hook: verify.hook,
+      topic: verify.topic,
+      allowSplit: verify.allowSplit,
+    });
+
+    if (verification.verdict === "skipped") {
+      // QA unavailable — deliver unverified rather than burn budget blind.
+      return { ...result, verification: undefined };
+    }
+
+    if (!best || rank(verification) > rank(best.verification)) {
+      best = { ...result, verification, attempts: attempt };
+    }
+
+    if (verification.verdict === "pass") break;
+
+    const canRetry = attempt <= maxRepairs && budgetLeft() > QA_MIN_BUDGET_MS;
+    console.warn(
+      `Thumbnail QA fail (attempt ${attempt}, score ${verification.score}): ${verification.defects
+        .map((d) => d.code)
+        .join(", ")}${canRetry ? " — repairing" : " — keeping best attempt"}`
+    );
+    if (!canRetry) break;
+    prompt_ = `${prompt}\n${buildRepairPromptBlock(verification, attempt + 1)}`;
+  }
+
+  return {
+    imageBase64: best!.imageBase64,
+    backend: best!.backend,
+    verification: { ...best!.verification, attempts: best!.attempts },
+  };
+}
+
 async function generateOneVariant(
   v: VariantSpec,
   options: {
@@ -268,17 +372,24 @@ async function generateOneVariant(
     imageSize?: "1K" | "2K" | "4K";
     assets?: ImageAsset[];
     budgetMs?: number;
+    verify?: VerifyLoopOptions;
   }
 ): Promise<VariantImage> {
-  const result = await generateThumbnail(
-    v.prompt,
-    options.model,
-    [],
-    options.imageSize || "1K",
-    false,
-    options.assets || [],
-    options.budgetMs
-  );
+  const result = options.verify
+    ? await generateWithVerification(
+        v.prompt,
+        { ...options.verify, allowSplit: v.composition === "split" },
+        options
+      )
+    : await generateThumbnail(
+        v.prompt,
+        options.model,
+        [],
+        options.imageSize || "1K",
+        false,
+        options.assets || [],
+        options.budgetMs
+      );
   return {
     id: v.id,
     image: result.imageBase64,
@@ -293,6 +404,7 @@ async function generateOneVariant(
     compositionFactorLabel: v.compositionFactorLabel,
     suggestedTitle: v.suggestedTitle,
     backend: result.backend,
+    verification: "verification" in result ? result.verification : undefined,
   };
 }
 
@@ -311,6 +423,8 @@ export async function generateThumbnailVariants(
     targetCount?: number;
     /** Hard wall-clock budget for the whole batch (ms). Default 200s. */
     budgetMs?: number;
+    /** When set, every variant runs the generate → verify → repair QA loop. */
+    verify?: VerifyLoopOptions;
   }
 ): Promise<VariantImage[]> {
   const target = options.targetCount ?? variants.length;

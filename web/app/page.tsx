@@ -185,6 +185,9 @@ export default function Home() {
     Record<string, "like" | "dislike" | null>
   >({});
   const [generatedVariants, setGeneratedVariants] = useState<GeneratedVariant[]>([]);
+  const [variantRatings, setVariantRatings] = useState<
+    Record<string, "like" | "dislike" | null>
+  >({});
   const [generatingSimilarId, setGeneratingSimilarId] = useState<string | null>(null);
   const [masterPrompt, setMasterPrompt] = useState(DEFAULT_MASTER_PROMPT);
   // Tracks whether the USER hand-edited the master prompt. Stale drafts/sessions saved
@@ -1599,6 +1602,72 @@ export default function Home() {
     applyRating(item.videoId, mode, comment);
     setFeedbackDialog({ open: false, mode: null, item: null });
     toast.success(mode === "like" ? "Note saved on like" : "Note saved on dislike");
+    // One Gemini pass → unique dry.md lessons (no duplicates)
+    void fetch("/api/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: "inspiration",
+        rating: mode,
+        comment,
+        topic,
+        hook,
+        title: item.title,
+        thumbnailUrl: item.thumbnailUrl,
+      }),
+    })
+      .then(async (res) => {
+        if (!res.ok) return;
+        const data = (await res.json()) as { added?: unknown[]; skipped?: number };
+        if (data.added?.length) {
+          toast.message(`Learned ${data.added.length} rule(s) → dry.md`);
+        }
+      })
+      .catch(() => {});
+  }
+
+  async function handleRateVariant(variant: GeneratedVariant, rating: "like" | "dislike") {
+    const prev = variantRatings[variant.id];
+    if (prev === rating) {
+      setVariantRatings((r) => ({ ...r, [variant.id]: null }));
+      return;
+    }
+    setVariantRatings((r) => ({ ...r, [variant.id]: rating }));
+    const comment =
+      typeof window !== "undefined"
+        ? window.prompt(
+            rating === "like"
+              ? "What works? (optional — saved to dry.md learning log)"
+              : "What’s wrong? (optional — Gemini will distill a rule into dry.md)",
+            ""
+          ) || ""
+        : "";
+    try {
+      const res = await fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source: "generated",
+          rating,
+          comment: comment.trim() || undefined,
+          topic,
+          hook,
+          title: variant.suggestedTitle || variant.label,
+          image: variant.image,
+          mimeType: "image/png",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Feedback failed");
+      const n = Array.isArray(data.added) ? data.added.length : 0;
+      toast.success(
+        n > 0
+          ? `${rating === "like" ? "Liked" : "Disliked"} — ${n} new lesson(s) in dry.md`
+          : `${rating === "like" ? "Liked" : "Disliked"} — already known (no duplicate)`
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not save feedback");
+    }
   }
 
   async function exploreSimilar(item: InspirationVideo, comment?: string) {
@@ -2855,6 +2924,8 @@ export default function Home() {
             }}
             onGenerateSimilar={(v) => void handleGenerateSimilar(v)}
             generatingSimilarId={generatingSimilarId}
+            variantRatings={variantRatings}
+            onRateVariant={(v, rating) => void handleRateVariant(v, rating)}
             paletteColors={selectedPalette?.colors || styleBrief?.colorPalette || []}
             paletteName={selectedPalette?.name}
           />
