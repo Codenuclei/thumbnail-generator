@@ -81,12 +81,12 @@ function layerToFigma(layer: EditorLayer): FigmaImportLayer | null {
         type: "TEXT",
         characters: layer.text,
         fontSize: Math.round((layer.font.size / 100) * CANVAS_HEIGHT),
-        fontFamily: layer.font.family.split(",")[0]?.trim() || "Impact",
-        fontWeight: layer.font.weight,
+        fontFamily: layer.font.family.split(",")[0]?.trim() || "Montserrat",
+        fontWeight: Math.min(700, layer.font.weight),
         textAlign: mapTextAlign(layer.font.align),
         fill: layer.font.fill,
-        stroke: layer.font.stroke,
-        strokeWidth: layer.font.strokeWidth,
+        stroke: layer.font.strokeWidth > 0 ? layer.font.stroke : undefined,
+        strokeWidth: layer.font.strokeWidth > 0 ? layer.font.strokeWidth : undefined,
       };
     case "image":
     case "watermark":
@@ -111,8 +111,8 @@ function layerToFigma(layer: EditorLayer): FigmaImportLayer | null {
         fill: layer.fill,
         characters: layer.label,
         fontSize: Math.round((layer.fontSize / 100) * CANVAS_HEIGHT),
-        fontFamily: "Impact",
-        fontWeight: 800,
+        fontFamily: "Montserrat",
+        fontWeight: 700,
         textAlign: "CENTER",
       };
     case "arrow":

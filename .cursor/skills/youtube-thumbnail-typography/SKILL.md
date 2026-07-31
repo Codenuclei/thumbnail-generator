@@ -10,9 +10,10 @@ description: >-
 
 # YouTube Thumbnail Typography
 
-Standalone **font engine** for this product. Image models cannot load TTFs — they
-only approximate font *energy*. This skill encodes the production rules and
-points at the code that enforces them.
+Standalone **font engine** for this product. Image models cannot load TTFs, so
+Gemini approximates accurate named font references and paints the exact hook in
+the generated image. The inactive Sharp/opentype implementation is preserved
+behind `POST_RENDER_TYPOGRAPHY_ENABLED = false` for later experiments.
 
 ## When to use
 
@@ -38,15 +39,14 @@ Read [reference.md](reference.md) for placement zones and defect codes.
 
 Copy these verbatim into prompts / reviews — do not soften:
 
-1. **Font family energy only**: Impact / Arial Black / Bebas Neue / Anton / Montserrat Black. Bold condensed display sans. ALL CAPS preferred; Title Case OK for 2-line stacks.
+1. **Named font targets**: Montserrat SemiBold/Bold, Bebas Neue, Anton, Oswald SemiBold, or Helvetica Neue Bold. Medium-bold and phone-readable; never Impact Black, Arial Black, ultra-heavy, or black weight.
 2. **Hook length**: 2–5 words. One hook, one place, one render.
-3. **ONLY treatment**: solid flat fill + soft **per-letter OFFSET drop shadow**.  
-   **ZERO outline/stroke** — not thick, not thin, not "clean".
-4. **NO plate**: no box, bar, banner, pill, scrim, or dimmed strip behind the line. Text sits on the photo.
+3. **Hook path**: Gemini paints the exact hook character-for-character exactly once. It must not translate, paraphrase, autocorrect, truncate, duplicate, or invent text.
+4. **Treatment**: solid flat fill, deliberate open tracking (0.06–0.10em), no stroke, outline, drop shadow, border, frame, plate/banner/scrim, neon, or glow.
 5. **NO neon / glow tube letters**.
-6. **Placement**: negative space opposite face/product; full hook inside frame; safe margin; never cover eyes/face; 1 line preferred, 2 max.
+6. **Placement**: Gemini dynamically selects x/y from negative space; keep ≥5% safe margin; never cover eyes/face/product silhouette; 1 line preferred, 2 max; shrink/wrap, never truncate.
 7. **NO collage seam** by default: one continuous scene (split only if user explicitly picks split).
-8. **Spelling**: letter-for-letter exact. Code compares OCR ↔ expected hook — never trust the model alone.
+8. **Spelling**: QA OCRs Gemini-painted text and requires the hook letter-for-letter exactly once.
 
 ## Agent workflow
 
@@ -63,7 +63,7 @@ Typography task:
 
 - Prefer `buildFontEnginePromptBlock()` / `TYPOGRAPHY_VARIANTS` from `font-engine.ts`
 - Never re-introduce "thin outline if crisp" language
-- Soft drop shadow = allowed; hard rim around glyphs = banned
+- Drop shadow, glow, and hard rim/stroke are banned
 
 ### Verifying an image
 
@@ -84,7 +84,7 @@ Or use `inspectTypography()` from `font-engine.ts`.
 
 | Look | Verdict |
 |------|---------|
-| Bold white/red caps on photo + soft shadow, single scene | pass |
+| Medium-bold white/red caps directly on photo, open tracking, single scene | pass |
 | Black/white stroke hugging letters | fail (`hard-outline`) |
 | Text on dark banner / blur plate | fail (`background-patch`) |
 | Two photos joined by a hard seam | fail (`collage-seam`) |

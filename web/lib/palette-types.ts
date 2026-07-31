@@ -29,7 +29,7 @@ export function applyPaletteToBrief(
     ...(brief || {
       summary: palette.rationale,
       colorPalette: palette.colors,
-      typography: "Impact / Bebas Neue condensed ALL-CAPS, thick outline",
+      typography: "Montserrat Bold / Bebas-like ALL-CAPS, open tracking, solid fill — no stroke or shadow",
       composition: "Hero with clean text space",
       emotionalHook: "Optimistic, authoritative, premium",
       textPatterns: [],

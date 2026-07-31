@@ -4,6 +4,10 @@ import {
   verifyThumbnailImage,
   type ThumbnailVerification,
 } from "@/lib/thumbnail-verify";
+import {
+  POST_RENDER_TYPOGRAPHY_ENABLED,
+  type PlacementZoneId,
+} from "@/lib/font-engine";
 
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-image";
@@ -63,6 +67,7 @@ export type VariantSpec = {
   compositionFactor?: string;
   compositionFactorLabel?: string;
   suggestedTitle?: string;
+  typographyZoneId?: PlacementZoneId;
 };
 
 export type VariantImage = {
@@ -92,6 +97,8 @@ export type VerifyLoopOptions = {
   maxRepairs?: number;
   /** True when the split-panel composition was explicitly requested. */
   allowSplit?: boolean;
+  /** Fallback zone when Gemini placement is missing — orchestrator still proposes. */
+  typographyZoneId?: PlacementZoneId;
 };
 
 /** Minimum budget left to bother launching a verify + repair cycle. */
@@ -116,7 +123,7 @@ function assetInstruction(asset: ImageAsset): string {
     return `KEY SOURCE STILL — "${asset.label || "video still"}". Use this as a plate: pull the best person, object, OR background for a YouTube thumbnail. Crop/reframe freely; do not force a full-frame paste. Keep real likeness/product identity if that element is chosen. Do not swap in a different invented person/product.`;
   }
   if (asset.role === "reference") {
-    return `REFERENCE ONLY — "${asset.label || "ref"}". Study its hook FONTS (weight, case, placement) and match that energy closely, but render as a fresh, similar (never identical) type treatment — no neon/glow text effects, and keep the full hook inside the frame with no cropped/incomplete letters. Do NOT copy its outline/stroke treatment on the letters — clean solid fill + soft drop shadow ONLY, zero outline of any width (any stroke traced around glyphs is a defect, not a style, and is the #1 recurring flaw to avoid). Study its color mood and layout only. Do not copy its subject over the user's media. Do NOT reproduce this reference image itself — the output must be a visibly different, original composition, not a near-copy or 1:1 replica of it. If this reference has a decorative border/frame/vignette around its edges or stray doodle stroke lines, ignore that completely — never carry a border, frame, or scribble stroke into the output; the output must fill the full canvas edge-to-edge with no framing.`;
+    return `REFERENCE ONLY — "${asset.label || "ref"}". Study font energy, case, open tracking, color mood, and layout only. Paint only the user's exact hook from the main prompt; never copy wording from this reference. Never copy outline, stroke, border, frame, plate, neon, glow, or shadow treatments from the reference. Do not copy its subject over the user's media or reproduce it as a near-copy.`;
   }
   if (asset.role === "seed") {
     return `GENERATED VARIANT SEED — "${asset.label || "variant seed"}". This is a prior output the user liked. Generate a sibling in the same story direction — match palette energy, subject scale, hook placement, and venue. Vary camera look and type variant per prompt. Improve phone-readability; do not pixel-copy. The result must NOT be a 1:1 replica of this seed image — change composition, staging, or framing enough that it is a new, similar-but-distinct thumbnail. No border/frame around the canvas edges.`;
@@ -141,7 +148,7 @@ function buildParts(
 }
 
 function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
+  return new Promise((r) => setTimeout(r, Math.max(0, Math.round(ms))));
 }
 
 function isTimeoutError(msg: string): boolean {
@@ -174,7 +181,7 @@ async function generateGeminiOnce(
         imageConfig: { aspectRatio: "16:9", imageSize },
       },
     }),
-    signal: AbortSignal.timeout(timeoutMs ?? timeoutForSize(imageSize)),
+    signal: AbortSignal.timeout(Math.floor(timeoutMs ?? timeoutForSize(imageSize))),
   });
 
   const raw = await res.text();
@@ -208,7 +215,7 @@ async function generateGemini(
   for (let attempt = 1; attempt <= MAX_RATE_RETRIES + 1; attempt++) {
     try {
       // Never let a later attempt outlive the caller's remaining budget.
-      const attemptTimeout = Math.min(callTimeout, budgetLeft());
+      const attemptTimeout = Math.floor(Math.min(callTimeout, budgetLeft()));
       if (attemptTimeout < 5_000) break;
       return await generateGeminiOnce(
         apiKey,
@@ -243,7 +250,8 @@ export async function generateThumbnail(
   imageSize: "1K" | "2K" | "4K" = "1K",
   allowFallback = false,
   assets: ImageAsset[] = [],
-  budgetMs?: number
+  budgetMs?: number,
+  composite?: { hook: string; zoneId?: PlacementZoneId; topic?: string }
 ): Promise<GenerateResult> {
   const geminiKey = runtimeEnv("GEMINI_API_KEY") || runtimeEnv("GOOGLE_API_KEY");
   const cohesivityKey = runtimeEnv("COH_APPLICATION_KEY");
@@ -256,7 +264,7 @@ export async function generateThumbnail(
   }
 
   try {
-    const buf = await generateGemini(
+    let buf = await generateGemini(
       geminiKey,
       prompt,
       geminiModel,
@@ -264,6 +272,28 @@ export async function generateThumbnail(
       assets,
       budgetMs
     );
+    if (POST_RENDER_TYPOGRAPHY_ENABLED && composite?.hook.trim()) {
+      try {
+        // Preserved rollback path for future experiments. This feature is off
+        // by default: Gemini currently paints and places the exact hook itself.
+        const { orchestrateHookComposite } = await import(
+          "@/lib/placement-orchestrator"
+        );
+        const composited = await orchestrateHookComposite(buf, {
+          hook: composite.hook,
+          fallbackZoneId: composite.zoneId,
+          topic: composite.topic,
+        });
+        buf = composited.buffer;
+        console.log(
+          composited.applied
+            ? `Hook orchestrated: "${composite.hook}" ${composited.detail}`
+            : `Optional hook compositor skipped (${composited.detail}) — Gemini render kept`
+        );
+      } catch (err) {
+        console.error("Optional hook compositor failed; returning Gemini render:", err);
+      }
+    }
     return {
       imageBase64: buf.toString("base64"),
       backend: `gemini:${geminiModel}@${imageSize}`,
@@ -320,7 +350,12 @@ export async function generateWithVerification(
       false,
       options.assets || [],
       // Reserve room for the verify call after this render.
-      Math.max(10_000, budgetLeft() - 15_000)
+      Math.max(10_000, budgetLeft() - 15_000),
+      {
+        hook: verify.hook,
+        zoneId: verify.typographyZoneId,
+        topic: verify.topic,
+      }
     );
 
     if (budgetLeft() < 20_000) {
@@ -335,6 +370,8 @@ export async function generateWithVerification(
       hook: verify.hook,
       topic: verify.topic,
       allowSplit: verify.allowSplit,
+      // Default path is Gemini-painted typography; QA must inspect those glyphs.
+      compositedText: POST_RENDER_TYPOGRAPHY_ENABLED && Boolean(verify.hook.trim()),
     });
 
     if (verification.verdict === "skipped") {
@@ -378,7 +415,11 @@ async function generateOneVariant(
   const result = options.verify
     ? await generateWithVerification(
         v.prompt,
-        { ...options.verify, allowSplit: v.composition === "split" },
+        {
+          ...options.verify,
+          allowSplit: v.composition === "split",
+          typographyZoneId: v.typographyZoneId,
+        },
         options
       )
     : await generateThumbnail(
@@ -388,8 +429,14 @@ async function generateOneVariant(
         options.imageSize || "1K",
         false,
         options.assets || [],
-        options.budgetMs
+        options.budgetMs,
+        undefined
       );
+  const verification =
+    "verification" in result
+      ? (result as GenerateResult & { verification?: VariantImage["verification"] })
+          .verification
+      : undefined;
   return {
     id: v.id,
     image: result.imageBase64,
@@ -404,7 +451,7 @@ async function generateOneVariant(
     compositionFactorLabel: v.compositionFactorLabel,
     suggestedTitle: v.suggestedTitle,
     backend: result.backend,
-    verification: "verification" in result ? result.verification : undefined,
+    verification,
   };
 }
 

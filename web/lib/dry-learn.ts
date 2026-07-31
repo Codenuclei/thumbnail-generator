@@ -3,6 +3,7 @@
  * then append unique lessons only (no repeats). Injected into every generate prompt.
  */
 
+import "server-only";
 import { createHash } from "crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
@@ -152,9 +153,10 @@ const SEED_AVOID = [
 ];
 
 const SEED_PREFER = [
-  "Bold condensed display sans energy (Impact / Bebas / Anton / Montserrat Black)",
-  "Solid flat fill + soft OFFSET per-letter drop shadow only",
-  "Place hook in clear negative space opposite the face; keep full text inside frame",
+  "Paint the exact hook once using Montserrat SemiBold/Bold, Bebas Neue, Anton, Oswald SemiBold, or Helvetica Neue Bold",
+  "Use medium-bold weight and deliberate open 0.06–0.10em tracking; never Impact Black, Arial Black, ultra-heavy, or mashed",
+  "Solid flat fill only — no stroke, outline, drop shadow, glow, border, plate, banner, or scrim",
+  "Dynamically place hook in clear negative space with 5% safe margins; never cover faces or crop text",
   "One continuous photographic scene by default (no collage)",
 ];
 
@@ -345,7 +347,7 @@ async function analyzeFeedbackOnce(input: LearnFeedbackInput): Promise<GeminiLes
       "- Do NOT repeat the same idea twice",
       "- polarity prefer for likes; avoid for dislikes (may include one prefer if like notes a keep)",
       "- Focus on typography, placement, composition, color, subject — not marketing copy",
-      "- Align with: zero letter outline, no text plate, soft offset shadow OK, no collage seams by default, bold condensed display sans",
+      "- Align with: exact hook once; Montserrat SemiBold/Bold, Bebas Neue, Anton, Oswald SemiBold, or Helvetica Neue Bold; medium-bold only; 0.06–0.10em open tracking; solid flat fill; no stroke/outline/drop shadow/glow/plate; dynamic negative-space placement; no collage seams by default",
       `User rating: ${input.rating}`,
       `Source: ${input.source}`,
       input.topic ? `Topic: ${input.topic}` : "",

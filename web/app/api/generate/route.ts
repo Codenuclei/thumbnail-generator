@@ -196,7 +196,13 @@ export async function POST(req: NextRequest) {
       });
       const result = await generateWithVerification(
         prompt,
-        { hook: hook ?? "", topic, maxRepairs: 1, allowSplit: composition === "split" },
+        {
+          hook: hook ?? "",
+          topic,
+          maxRepairs: 1,
+          allowSplit: composition === "split",
+          typographyZoneId: typographyVariantForIndex(0).zoneId,
+        },
         { model, imageSize, assets: allAssets, budgetMs: 150_000 }
       );
       return NextResponse.json({
@@ -351,6 +357,7 @@ export async function POST(req: NextRequest) {
         cameraFilterLabel: cam.label,
         compositionFactor: factorId,
         compositionFactorLabel: factorMeta?.label || factorId,
+        typographyZoneId: typeVariant.zoneId,
         prompt,
       };
     });
@@ -365,7 +372,12 @@ export async function POST(req: NextRequest) {
       budgetMs: imageSize === "1K" ? 200_000 : imageSize === "2K" ? 220_000 : 260_000,
       // LLM-ops QA loop: every variant is OCR'd + typography-scored by a
       // vision model; failures regenerate once with a targeted repair note.
-      verify: { hook: hook ?? "", topic, maxRepairs: 1 },
+      verify: {
+        hook: hook ?? "",
+        topic,
+        maxRepairs: 1,
+        typographyZoneId: undefined,
+      },
     });
 
     if (!images.length) {

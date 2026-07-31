@@ -51,7 +51,7 @@ export function buildGenerationContextBlock(input: GenerationContextInput): stri
   const hook = (input.hook || "").trim();
   const lines: string[] = [
     "GENERATION BRIEF (assemble the thumbnail from these inputs — do not ignore research):",
-    `Story to tell in 0.3s: ${input.topic.trim()}${hook ? ` · hook "${hook.toUpperCase()}"` : " · text-free (no on-image copy)"}`,
+    `Story to tell in 0.3s: ${input.topic.trim()}${hook ? ` · paint exact hook once: "${hook}"` : " · text-free (no on-image copy)"}`,
   ];
 
   if (input.topicContext) {
@@ -106,7 +106,7 @@ export function buildGenerationContextBlock(input: GenerationContextInput): stri
 
   if (input.selectedRefCount && input.selectedRefCount > 0) {
     lines.push(
-      `${input.selectedRefCount} research thumbnail(s) selected — study attached reference images for fonts (match weight/case/energy, no neon glow, no cropped letters) and composition. Do NOT copy the reference's outline/stroke treatment on letters — solid fill + soft shadow ONLY, zero outline of any width (any stroke around glyphs is a defect). Never reproduce a reference 1:1 — output must be a new, similar-but-distinct image. Ignore any border/frame/vignette edge or decorative doodle stroke a reference may have — never carry that into the output.`
+      `${input.selectedRefCount} research thumbnail(s) selected — study attached reference images for font energy, open tracking, and composition only. Paint only the user's exact hook; never copy reference wording. Never reproduce a reference 1:1 or carry over its outline, stroke, border, frame, plate, glow, or shadow treatment.`
     );
   }
 
@@ -145,7 +145,9 @@ export function buildGenerationContextBlock(input: GenerationContextInput): stri
     "SETTING RULE: Thumbnail environment must match topic context and media evidence. Never substitute a wrong venue (e.g. outdoor track for indoor HYROX, factory sodium glow for cleanroom).",
     "ORIGINALITY RULE: References/seed are style + font guidance only. The output must never be an exact or near-1:1 replica of any single reference or seed thumbnail — always vary composition/staging/framing enough to be a new, similar-but-distinct image.",
     "NO BORDER/FRAME RULE: The image must fill the entire 16:9 canvas edge-to-edge — no colored border, picture-frame outline, vignette ring, rounded-card bezel, or decorative stroke/scribble line anywhere near the canvas edges, even if a reference or seed has one.",
-    "NO TEXT BACKDROP RULE: Hook text sits directly on the photo — never on a solid/semi-transparent color box, bar, ribbon, banner, or rounded 'plate' behind the letters. Use placement + soft shadow for contrast, not a colored block."
+    hook
+      ? `GEMINI TYPOGRAPHY RULE: Paint the exact hook "${hook}" character-for-character exactly once. Use a named medium-bold sans target with 0.06–0.10em open tracking, solid flat fill, dynamic negative-space placement, ≥5% safe margins, and no backdrop, outline, stroke, drop shadow, neon, or glow.`
+      : "NO-TEXT RULE: The Hook field is empty; render no on-image letters, captions, logos, labels, watermarks, or pseudo-text."
   );
 
   return lines.filter(Boolean).join("\n");

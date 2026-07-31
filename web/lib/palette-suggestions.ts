@@ -106,7 +106,7 @@ function styleBriefFromPalettes(
       extras?.summary ||
       `Color directions sampled from liked thumbnail pixels for "${topic}".`,
     colorPalette: palettes[0]?.colors || [],
-    typography: extras?.typography || "Impact / Bebas Neue condensed ALL-CAPS, thick outline, high contrast",
+    typography: extras?.typography || "Montserrat Bold / Bebas-like ALL-CAPS, open tracking, solid fill — no stroke or shadow",
     composition: extras?.composition || "Hero subject with clean text space",
     emotionalHook: extras?.emotionalHook || "Optimistic, authoritative, grounded",
     textPatterns: extras?.textPatterns || [],

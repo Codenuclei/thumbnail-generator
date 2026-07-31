@@ -76,7 +76,7 @@ function emptyBrief(topic: string, hook?: string): StyleBrief {
   return {
     summary: `Style for "${topic}". Colors unlock after you like qualified references.`,
     colorPalette: [],
-    typography: "Impact / Bebas Neue condensed ALL-CAPS, thick outline",
+    typography: "Montserrat Bold / Bebas-like ALL-CAPS, open tracking, solid fill — no stroke or shadow",
     composition: "Hero with clean text space",
     emotionalHook: "Clear, high-contrast, on-topic",
     textPatterns: [],
@@ -738,7 +738,7 @@ Return ONLY JSON:
     const styleBrief: StyleBrief = {
       summary: parsed.summary || emptyBrief(title, hook).summary,
       colorPalette: [],
-      typography: parsed.typography || "Impact / Bebas Neue condensed ALL-CAPS, thick outline",
+      typography: parsed.typography || "Montserrat Bold / Bebas-like ALL-CAPS, open tracking, solid fill — no stroke or shadow",
       composition: parsed.composition || "Hero with clean text space",
       emotionalHook: "Clear, high-contrast, on-title",
       textPatterns: [],

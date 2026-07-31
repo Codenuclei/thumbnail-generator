@@ -59,7 +59,7 @@ if (process.argv.includes("--repair")) {
     [
       "YouTube thumbnail, 16:9. Documentary photo: empty water reservoir, worried young Indian woman focal subject.",
       'Bold hook text: "WATER GONE"',
-      "Typography: bold condensed display sans, ALL CAPS, solid fill, soft drop shadow, directly on photo.",
+      "Typography: Oswald SemiBold, solid flat fill, deliberate 0.06–0.10em open tracking, no stroke, outline, drop shadow, glow, or plate, directly on photo.",
     ].join("\n"),
     { hook: "NOTHING LEFT", topic: "India water crisis", maxRepairs: 1 },
     { imageSize: "1K", budgetMs: 170_000 }
@@ -84,7 +84,7 @@ if (full) {
     [
       "YouTube thumbnail, 16:9 landscape. Documentary photo of Bengaluru city with dried-out lake bed in foreground, worried young Indian woman as focal subject.",
       'Bold hook text (phone-readable) — spell EXACTLY, letter-for-letter: "WE ARE RUNNING OUT"',
-      "Typography: bold condensed display sans (Anton / Impact energy), ALL CAPS, solid flat fill with soft drop shadow, no outline, text directly on the photo in clear negative space. One clean render of the words — no ghost layers, no cropped letters, no background patch, no border.",
+      "Typography: Anton or Oswald SemiBold style at medium-bold weight, solid flat fill, deliberate 0.06–0.10em open tracking, no outline, drop shadow, glow, or plate. Place text directly on the photo in clear negative space. One clean render of the words — no ghost layers, no cropped letters, no border.",
     ].join("\n"),
     { hook: "WE ARE RUNNING OUT", topic: "India water crisis in Bengaluru", maxRepairs: 1 },
     { imageSize: "1K", budgetMs: 170_000 }

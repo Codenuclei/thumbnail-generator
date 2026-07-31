@@ -2,12 +2,11 @@ export const CANVAS_WIDTH = 1280;
 export const CANVAS_HEIGHT = 720;
 
 export const FONT_FAMILIES = [
-  "Impact, Haettenschweiler, Arial Narrow Bold, sans-serif",
-  "Arial Black, Arial Bold, Gadget, sans-serif",
+  "Montserrat, Helvetica Neue, Helvetica, Arial, sans-serif",
   "Helvetica Neue, Helvetica, Arial, sans-serif",
-  "Georgia, Times New Roman, serif",
-  "Bebas Neue, Impact, sans-serif",
   "Oswald, Arial Narrow, sans-serif",
+  "Bebas Neue, Arial Narrow, sans-serif",
+  "Arial, Helvetica, sans-serif",
 ] as const;
 
 export type TextAlign = "left" | "center" | "right";
@@ -24,6 +23,8 @@ export type FontStyle = {
   shadowBlur: number;
   shadowOffsetX: number;
   shadowOffsetY: number;
+  /** Canvas letterSpacing in px — open tracking by default. */
+  letterSpacing: number;
 };
 
 export type LayerKind = "text" | "image" | "shape" | "arrow" | "badge" | "watermark";
@@ -107,16 +108,17 @@ export type EditorDocument = {
 
 export const DEFAULT_FONT: FontStyle = {
   family: FONT_FAMILIES[0],
-  weight: 900,
+  weight: 700,
   size: 8.5,
-  align: "center",
+  align: "left",
   fill: "#ffffff",
-  stroke: "#000000",
-  strokeWidth: 3,
-  shadowColor: "rgba(0,0,0,0.55)",
-  shadowBlur: 8,
-  shadowOffsetX: 2,
-  shadowOffsetY: 2,
+  stroke: "transparent",
+  strokeWidth: 0,
+  shadowColor: "transparent",
+  shadowBlur: 0,
+  shadowOffsetX: 0,
+  shadowOffsetY: 0,
+  letterSpacing: 4,
 };
 
 export function createEmptyDocument(backgroundImage: string | null = null): EditorDocument {

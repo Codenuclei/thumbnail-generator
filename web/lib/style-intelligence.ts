@@ -44,7 +44,7 @@ Return ONLY valid JSON with this shape:
 {
   "summary": "2 sentence style synthesis",
   "colorPalette": ["#hex or color name", ...],
-  "typography": "named display fonts + weight/case/outline/placement observed on the thumbnails (e.g. Impact ALL-CAPS thick black outline bottom-left)",
+  "typography": "named display fonts + weight/case/placement observed (e.g. Montserrat Bold ALL-CAPS open tracking lower-left) — note outlines/shadows only to AVOID them",
   "composition": "layout and subject placement rules",
   "emotionalHook": "dominant emotion to convey",
   "textPatterns": ["short hook patterns observed"],
@@ -92,7 +92,7 @@ function fallbackBrief(topic: string, _videos: ScrapedVideo[], hook?: string): S
   return {
     summary: `Premium ${topic} thumbnails: clean factory visuals, optimistic business tone, bold professional hooks.`,
     colorPalette: ["#FFFFFF", "#1E3A5F", "#F5A623", "#2ECC71"],
-    typography: "Impact / Bebas Neue condensed ALL-CAPS, thick black outline, 2–4 words, high contrast",
+    typography: "Montserrat Bold / Bebas-like condensed ALL-CAPS, open tracking, solid fill, 2–4 words, high contrast — no stroke or shadow",
     composition: "Hero subject left, process environment right, clean negative space for text",
     emotionalHook: "Optimistic, authoritative, premium",
     textPatterns: ["HOW IT'S MADE", "INSIDE THE FACTORY", "THE PROCESS"],

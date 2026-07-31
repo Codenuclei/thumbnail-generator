@@ -65,6 +65,7 @@ function drawTextLayer(ctx: CanvasRenderingContext2D, layer: Extract<EditorLayer
   ctx.shadowBlur = layer.font.shadowBlur;
   ctx.shadowOffsetX = layer.font.shadowOffsetX;
   ctx.shadowOffsetY = layer.font.shadowOffsetY;
+  ctx.letterSpacing = `${layer.font.letterSpacing ?? 4}px`;
 
   const lines = layer.text.split("\n");
   const lineHeight = fontSize * 1.1;
@@ -207,7 +208,8 @@ function drawBadgeLayer(ctx: CanvasRenderingContext2D, layer: Extract<EditorLaye
   ctx.fill();
 
   ctx.fillStyle = layer.textColor;
-  ctx.font = `800 ${fontSize}px Impact, Arial Black, sans-serif`;
+  ctx.font = `700 ${fontSize}px Montserrat, Helvetica Neue, Arial, sans-serif`;
+  ctx.letterSpacing = "2px";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(layer.label, 0, 0);

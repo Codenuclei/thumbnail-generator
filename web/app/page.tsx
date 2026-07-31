@@ -20,7 +20,7 @@ import { ColorPicker } from "@/components/ColorPicker";
 import type { EditorAsset } from "@/components/ThumbnailEditor";
 import type { ColorPaletteOption } from "@/lib/palette-types";
 import { applyPaletteToBrief } from "@/lib/palette-types";
-import { DEFAULT_MASTER_PROMPT } from "@/lib/prompt-engine";
+import { DEFAULT_MASTER_PROMPT } from "@/lib/master-prompt";
 import { COMPOSITION_FACTORS } from "@/lib/composition-factors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

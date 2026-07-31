@@ -29,7 +29,10 @@ const {
   FONT_ENGINE_VARIANTS,
   YOUTUBE_DISPLAY_FONTS,
   PLACEMENT_ZONES,
+  GEMINI_PAINTS_HOOK_TEXT,
+  POST_RENDER_TYPOGRAPHY_ENABLED,
 } = await import("../lib/font-engine");
+const { DEFAULT_MASTER_PROMPT } = await import("../lib/master-prompt");
 
 const ROOT = join(import.meta.dir, "..", "..");
 const ASSETS =
@@ -52,8 +55,9 @@ const FIXTURES: Fixture[] = [
     path: join(ASSETS, "Screenshot_2026-07-30_at_4.48.15_PM-20deaadd-3447-435e-8d72-83588bc61425.png"),
     hook: "MUNNAR",
     topic: "Kerala tea gardens",
-    // Single-word gold still passes OCR; hygiene prefers 2+ words but QA allows exact match.
-    expect: "pass",
+    // Exact spelling alone is insufficient under the stricter no-shadow/open-tracking rubric.
+    expect: "fail",
+    expectCodes: ["shadow-or-glow", "tight-tracking"],
   },
   {
     name: "gold-final-v1-no-outline",
@@ -67,14 +71,16 @@ const FIXTURES: Fixture[] = [
     path: join(QA, "final-v2.png"),
     hook: "DO NOT BUY NOW",
     topic: "Mumbai real estate",
-    expect: "pass",
+    expect: "fail",
+    expectCodes: ["shadow-or-glow", "tight-tracking"],
   },
   {
     name: "gold-strict-v1-travel",
     path: join(QA, "strict-v1.png"),
     hook: "TRAVEL DESTINATIONS",
     topic: "Kerala tea gardens travel",
-    expect: "pass",
+    expect: "fail",
+    expectCodes: ["shadow-or-glow", "tight-tracking"],
   },
   {
     name: "fail-stroke-and-split",
@@ -108,11 +114,29 @@ function runHygieneTests() {
   assert(!url.ok, "URL hook must fail");
   console.log("✓ URL hook rejected");
 
-  const block = buildFontEnginePromptBlock({ hook: "WE ARE RUNNING OUT", variantIndex: 0 });
-  assert(block.includes("WE ARE RUNNING OUT"), "prompt must include exact hook");
+  const exactHook = "We Aren't Ready!";
+  const block = buildFontEnginePromptBlock({ hook: exactHook, variantIndex: 0 });
+  assert(block.includes(`"${exactHook}"`), "prompt must include exact hook characters and case");
   assert(block.includes("ZERO outline") || HARD_BANS.some((b) => block.includes("outline")), "prompt must ban outlines");
   assert(block.includes(ALLOWED_TREATMENT.split("+")[0].trim().slice(0, 12)), "prompt must state allowed treatment");
-  console.log("✓ prompt block includes hook + bans");
+  assert(block.includes("Montserrat SemiBold"), "prompt must include named font targets");
+  assert(block.includes("Bebas Neue") && block.includes("Oswald SemiBold"), "prompt must include full named font guidance");
+  assert(block.includes("0.06–0.10em"), "prompt must require improved open tracking");
+  assert(!/TEXTLESS|post-render|do not paint/i.test(block), "active font prompt must not request a textless/compositor path");
+  console.log("✓ prompt block includes exact hook + Gemini typography rules");
+
+  // This is the typography portion injected into every buildUltraPrompt image
+  // request, combined with the default master prompt that precedes it.
+  const active = `${DEFAULT_MASTER_PROMPT}\n${block}`;
+  assert(active.includes(`"${exactHook}"`), "active image prompt must receive the literal hook");
+  assert(!/TEXTLESS|post-render|SVG overlay|application composites/i.test(active), "active image prompt must contain no compositor instruction");
+  assert(active.includes("Helvetica Neue Bold"), "active prompt must include named font references");
+  assert(active.includes("0.06–0.10em"), "active prompt must include open tracking range");
+  console.log("✓ full active image prompt is Gemini-painted");
+
+  assert(GEMINI_PAINTS_HOOK_TEXT === true, "Gemini typography must be enabled by default");
+  assert(POST_RENDER_TYPOGRAPHY_ENABLED === false, "orchestrator/compositor must be disabled by default");
+  console.log("✓ compositor/orchestrator disabled by default");
 
   assert(YOUTUBE_DISPLAY_FONTS.length >= 4, "need display font set");
   assert(PLACEMENT_ZONES.length >= 4, "need placement zones");
@@ -179,6 +203,11 @@ try {
 } catch (err) {
   console.error("✗ hygiene:", err instanceof Error ? err.message : err);
   failed += 1;
+}
+
+if (process.argv.includes("--prompt-only")) {
+  console.log(`\n=== summary: ${failed === 0 ? "ALL PASSED" : `${failed} FAILED`} ===`);
+  process.exit(failed === 0 ? 0 : 1);
 }
 
 console.log("\n=== vision fixtures ===");

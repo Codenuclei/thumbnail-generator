@@ -20,10 +20,14 @@ export type VerificationDefectCode =
   | "hook-missing"
   | "hook-misspelled"
   | "extra-text"
+  | "ai-painted-text"
+  | "face-collision"
   | "ghost-letters"
   | "letters-cropped"
   | "hard-outline"
   | "blotchy-outline"
+  | "shadow-or-glow"
+  | "tight-tracking"
   | "background-patch"
   | "collage-seam"
   | "wrong-font-style"
@@ -57,9 +61,13 @@ const CRITICAL_CODES: ReadonlySet<VerificationDefectCode> = new Set([
   "hook-missing",
   "hook-misspelled",
   "extra-text",
+  "ai-painted-text",
+  "face-collision",
   "ghost-letters",
   "letters-cropped",
   "hard-outline",
+  "shadow-or-glow",
+  "tight-tracking",
   "collage-seam",
   "border-frame",
   "illegible",
@@ -90,17 +98,32 @@ const RESPONSE_SCHEMA = {
     fontStyleOk: {
       type: "BOOLEAN",
       description:
-        "True when text uses bold condensed display sans (Impact/Anton/Bebas/Montserrat Black energy) — not thin, script, serif, handwritten, or neon-glow lettering",
+        "True when text uses medium-bold Montserrat SemiBold/Bold, Bebas Neue, Anton, Oswald SemiBold, or Helvetica Neue Bold styling — never Impact Black, Arial Black, thin, script, serif, handwritten, or ultra-heavy/black",
+    },
+    trackingOk: {
+      type: "BOOLEAN",
+      description:
+        "True only when letters have deliberate visible breathing room approximating 0.06–0.10em tracking, never tight, mashed, touching, or excessively scattered",
+    },
+    placementOk: {
+      type: "BOOLEAN",
+      description:
+        "True only when the complete hook is in natural negative space, at least about 5% from every edge, uncropped, and does not cover a face, eyes, mouth, or primary product silhouette",
+    },
+    hasShadowOrGlow: {
+      type: "BOOLEAN",
+      description:
+        "True if hook glyphs have any visible drop shadow, glow, neon aura, or shadow rim; required treatment is solid flat fill only",
     },
     textOnPlate: {
       type: "BOOLEAN",
       description:
-        "True if the hook text sits on ANY shared region behind the whole line that is not the untouched photo: a box, bar, banner, ribbon, pill, strip, scrim, dimmed band, blurred patch, or translucent overlay — hard-edged OR soft-edged. False ONLY when letters sit directly on unmodified photo pixels with at most a soft per-letter drop shadow.",
+        "True if the hook text sits on ANY shared region behind the whole line that is not the untouched photo: a box, bar, banner, ribbon, pill, strip, scrim, dimmed band, blurred patch, or translucent overlay — hard-edged OR soft-edged. False ONLY when letters sit directly on unmodified photo pixels with no shared backdrop.",
     },
     hookHasOutline: {
       type: "BOOLEAN",
       description:
-        "True ONLY when a hard stroke/outline is TRACED AROUND the glyph contour itself (a contrasting rim that hugs the letter edge on all sides, like a stroked path). False for soft diffuse drop shadows that sit OFFSET below/behind letters (dark blur that does not hug the glyph as a rim). Soft shadow alone = false. Hard rim/stroke around letters = true.",
+        "True when a hard stroke/outline is TRACED AROUND the glyph contour, OR when a forced drop-shadow / glow rim is used as a substitute outline. Preferred treatment is solid flat fill with open tracking and no stroke/shadow.",
     },
     collageSeam: {
       type: "BOOLEAN",
@@ -118,9 +141,13 @@ const RESPONSE_SCHEMA = {
               "hook-missing",
               "hook-misspelled",
               "extra-text",
+              "ai-painted-text",
+              "face-collision",
               "ghost-letters",
               "letters-cropped",
               "blotchy-outline",
+              "shadow-or-glow",
+              "tight-tracking",
               "background-patch",
               "wrong-font-style",
               "border-frame",
@@ -146,19 +173,29 @@ const RESPONSE_SCHEMA = {
     "defects",
     "repairNote",
     "fontStyleOk",
+    "trackingOk",
+    "placementOk",
+    "hasShadowOrGlow",
     "textOnPlate",
     "hookHasOutline",
     "collageSeam",
   ],
 } as const;
 
-function buildVerifyPrompt(hookExpected: string, topic: string): string {
+function buildVerifyPrompt(
+  hookExpected: string,
+  topic: string,
+  compositedText: boolean
+): string {
   const hookBlock = hookExpected
     ? [
         `EXPECTED HOOK TEXT (must appear exactly once, spelled character-for-character): "${hookExpected}"`,
         "Transcribe ALL text you can see on the image verbatim into hookFound.",
         "Flag hook-misspelled if ANY letter is dropped, added, swapped, doubled (e.g. AMAZONON), or auto-corrected to a different word.",
         "Flag extra-text if there is ANY text beyond the expected hook: invented captions, subtitles, channel names, subscribe buttons, view counts, watermarks, or a second copy of the hook.",
+        ...(compositedText
+          ? ["The expected hook was composited by the application. Flag ai-painted-text if the plate contains any additional AI-generated letters or pseudo-text."]
+          : []),
       ]
     : [
         "EXPECTED HOOK TEXT: none — this thumbnail must be completely text-free.",
@@ -174,15 +211,23 @@ function buildVerifyPrompt(hookExpected: string, topic: string): string {
     "DEFECT RUBRIC (report every defect you actually see, with severity):",
     "- ghost-letters (critical): double-printed/echoed glyph layers, overlapping or colliding letters, melted or smeared strokes, stray glyph fragments.",
     "- letters-cropped (critical): any part of the hook cut off by the canvas edge or only partially rendered.",
-    "- hard-outline (critical): a HARD stroke/rim traced around the glyph contour itself (contrasting line hugging the letter edge). Soft diffuse drop shadows OFFSET below/behind letters are NOT outlines — those are allowed and preferred. Only flag when you see an actual stroked rim around letters.",
-    "- background-patch (critical): hook sitting on ANY shared region behind the line that is not the untouched photo — box, bar, banner, ribbon, pill, strip, scrim, dimmed band, blurred patch, or translucent overlay, hard OR soft edged. Soft per-letter drop shadows are fine.",
+    "- hard-outline (critical): any hard stroke or rim traced around glyphs. Solid flat fill with no outline is required.",
+    "- shadow-or-glow (critical): any drop shadow, glow, neon aura, or shadow rim behind/around letters.",
+    "- tight-tracking (critical): letters are tight, mashed, touching, or lack deliberate visible breathing room around 0.06–0.10em.",
+    "- background-patch (critical): hook sitting on ANY shared region behind the line that is not the untouched photo — box, bar, banner, ribbon, pill, strip, scrim, dimmed band, blurred patch, or translucent overlay, hard OR soft edged.",
     "- collage-seam (critical): image split into two or more panels by hard straight seams joining different photos/scenes — output must be ONE continuous photographic scene.",
-    "- wrong-font-style (critical): thin, script, serif, handwritten, comic, or neon/glow tube-light lettering instead of bold condensed display sans (Impact / Anton / Bebas Neue / Montserrat Black energy).",
+    "- face-collision (critical): the hook overlaps a face, eyes, mouth, or readable product silhouette, or ignores available clean negative space.",
+    ...(compositedText
+      ? [
+          "- ai-painted-text (critical in legacy compositor mode): leftover generated lettering or pseudo-text besides the exact composited hook.",
+        ]
+      : []),
+    "- wrong-font-style (critical): thin, script, serif, handwritten, comic, Impact Black, Arial Black, or ultra-heavy/black lettering instead of a medium-bold Montserrat SemiBold/Bold, Bebas Neue, Anton, Oswald SemiBold, or Helvetica Neue Bold target.",
     "- border-frame (critical): decorative border, frame, vignette ring, or stroke running along the canvas edges.",
     "- illegible (critical): hook unreadable when the image is shrunk to phone-feed size (~120px wide).",
     "- other (minor unless severe): anything else that would embarrass a top YouTube channel.",
     "",
-    "Judge letterform quality the way a channel art director would: glyphs must be clean, evenly spaced, one pass, phone-readable.",
+    "Judge letterform quality the way a channel art director would: the exact hook must be painted once, glyphs clean and medium-bold, spacing deliberately open, placement in real negative space, ≥5% safe margins, and all text phone-readable.",
     "Score 0-100: 90+ = ship-ready; 70-89 = passable with minor flaws; below 70 = defective.",
     "Return JSON only.",
   ].join("\n");
@@ -195,6 +240,8 @@ export async function verifyThumbnailImage(options: {
   topic: string;
   /** True when the user explicitly requested a split-panel composition. */
   allowSplit?: boolean;
+  /** True when the exact hook was composited after plate generation. */
+  compositedText?: boolean;
 }): Promise<ThumbnailVerification> {
   const started = Date.now();
   const hookExpected = normalizeHook(options.hook || "");
@@ -227,7 +274,13 @@ export async function verifyThumbnailImage(options: {
                   data: options.imageBase64,
                 },
               },
-              { text: buildVerifyPrompt(hookExpected, options.topic) },
+              {
+                text: buildVerifyPrompt(
+                  hookExpected,
+                  options.topic,
+                  Boolean(options.compositedText)
+                ),
+              },
             ],
           },
         ],
@@ -258,6 +311,9 @@ export async function verifyThumbnailImage(options: {
       hookFound?: string;
       score?: number;
       fontStyleOk?: boolean;
+      trackingOk?: boolean;
+      placementOk?: boolean;
+      hasShadowOrGlow?: boolean;
       textOnPlate?: boolean;
       hookHasOutline?: boolean;
       collageSeam?: boolean;
@@ -314,7 +370,7 @@ export async function verifyThumbnailImage(options: {
         code: "background-patch",
         severity: "critical",
         detail:
-          "Hook text sits on a band/strip/scrim/overlay instead of directly on the photo — remove it and place the text on natural negative space with a soft per-letter drop shadow only.",
+          "Hook text sits on a band/strip/scrim/overlay instead of directly on the photo — remove the plate and leave clean negative space for solid-fill open-tracking type with no stroke or shadow.",
       });
     }
     if (
@@ -326,7 +382,45 @@ export async function verifyThumbnailImage(options: {
         code: "hard-outline",
         severity: "critical",
         detail:
-          "Hook letters have a hard stroke/rim traced around the glyph edges — outlines are banned. Keep solid-fill letters with a soft OFFSET drop shadow only (no rim hugging the letters).",
+          "Hook letters have a hard stroke/rim traced around the glyph edges — outlines are banned. Repaint solid-fill letters with open tracking and no stroke, border, plate, or shadow.",
+      });
+    }
+    if (
+      hookExpected &&
+      parsed.hasShadowOrGlow === true &&
+      !defects.some((d) => d.code === "shadow-or-glow")
+    ) {
+      defects.push({
+        code: "shadow-or-glow",
+        severity: "critical",
+        detail:
+          "Hook letters use a drop shadow or glow — repaint them as solid flat fill only with no shadow, glow, neon aura, stroke, or outline.",
+      });
+    }
+    if (
+      hookExpected &&
+      parsed.trackingOk === false &&
+      !defects.some((d) => d.code === "tight-tracking")
+    ) {
+      defects.push({
+        code: "tight-tracking",
+        severity: "critical",
+        detail:
+          "Hook letter spacing is too tight or mashed — repaint with deliberate open tracking around 0.06–0.10em and visible breathing room.",
+      });
+    }
+    if (
+      hookExpected &&
+      parsed.placementOk === false &&
+      !defects.some(
+        (d) => d.code === "face-collision" || d.code === "letters-cropped"
+      )
+    ) {
+      defects.push({
+        code: "face-collision",
+        severity: "critical",
+        detail:
+          "Hook placement is unsafe — move the complete text into clean negative space, keep at least 5% margin, and avoid faces, eyes, and product silhouettes.",
       });
     }
     if (
@@ -356,6 +450,8 @@ export async function verifyThumbnailImage(options: {
           d.severity === "critical" &&
           (d.code === "blotchy-outline" ||
             d.code === "background-patch" ||
+            d.code === "shadow-or-glow" ||
+            d.code === "tight-tracking" ||
             d.code === "wrong-font-style")
       );
 
@@ -402,7 +498,12 @@ export function buildRepairPromptBlock(
     `AUTOMATED QA FAILED (repair attempt ${attempt}) — the previous render of this exact prompt was rejected by a typography inspector. Fix ALL of these defects this time:`,
     ...defectLines,
     verification.hookExpected
-      ? `The hook text must read EXACTLY "${verification.hookExpected}" — this SUPERSEDES any conflicting hook text mentioned earlier in the prompt. Render ONLY this hook, exactly once. Verify every letter before finalizing: one clean pass, no ghost layers, no cropped glyphs, bold condensed display sans directly on the photo.`
+      ? [
+          `REPAINT THE EXACT HOOK character-for-character, exactly once: "${verification.hookExpected}". Do not translate, paraphrase, autocorrect, truncate, duplicate, or add text.`,
+          "Use Montserrat SemiBold/Bold, Bebas Neue, Anton, Oswald SemiBold, or Helvetica Neue Bold styling at medium-bold weight only; never Impact Black, Arial Black, ultra-heavy, or black.",
+          "Use deliberate 0.06–0.10em open tracking and solid flat fill. Remove every ghost letter, plate/banner/scrim, stroke, outline, drop shadow, glow, and neon treatment.",
+          "Dynamically place the complete hook in clean negative space with ≥5% safe margins. Never crop it or cover faces, eyes, or product silhouettes. One line preferred, two maximum; shrink/wrap rather than truncate. Keep one continuous scene with no collage seams.",
+        ].join(" ")
       : "The image must contain ZERO text of any kind — this supersedes any earlier text instruction.",
   ].join("\n");
 }

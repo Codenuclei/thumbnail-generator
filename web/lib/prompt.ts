@@ -1,13 +1,13 @@
 import type { InspirationVideo } from "@/lib/inspiration";
 
 const STYLE_CONTEXT =
-  "This channel has 21 reference thumbnails. Collective style DNA: real-camera 16:9 YouTube thumbnails (Canon EOS R5 / 35mm feel); recurring young Indian woman (or bearded man with glasses) with strong but natural emotional expressions; bold ALL-CAPS sans-serif text in yellow/red/white with thick outlines; curiosity-gap hooks and shock stats; split-screen comparisons for contrasts; India-focused documentary/explainer topics; small corner logo badges; red/yellow curved annotation arrows; desaturated moody grade for serious topics, vivid but photographic grade for shock/comparison — never CGI gloss.";
+  "This channel has 21 reference thumbnails. Collective style DNA: real-camera 16:9 YouTube thumbnails (Canon EOS R5 / 35mm feel); recurring young Indian woman (or bearded man with glasses) with strong but natural emotional expressions; Montserrat SemiBold/Bold, Bebas Neue, Anton, Oswald SemiBold, or Helvetica Neue Bold styling at medium-bold weight with deliberate 0.06–0.10em open tracking and solid fill (no stroke, outline, drop shadow, or glow); curiosity-gap hooks and shock stats; India-focused documentary/explainer topics; desaturated moody grade for serious topics, vivid but photographic grade for shock/comparison — never CGI gloss.";
 
 const STYLE_SUFFIX =
-  "YouTube thumbnail, 16:9 landscape, shot like documentary still photography: natural window lighting or practical location light, shallow depth of field, minor film grain, imperfect skin texture; a young Indian woman with a strong emotional facial expression as the focal subject; high-contrast but camera-real color grade; bold ALL-CAPS heavy sans-serif text with thick outline in yellow/red/white; short punchy curiosity-gap hook; small channel logo badge in a corner. Avoid hyperrealistic / 8k / unreal engine / masterpiece / highly detailed AI-slop language and look.";
+  "YouTube thumbnail, 16:9 landscape, shot like documentary still photography: natural window lighting or practical location light, shallow depth of field, minor film grain, imperfect skin texture; a young Indian woman with a strong emotional facial expression as the focal subject; high-contrast but camera-real color grade; named medium-bold sans target with deliberate 0.06–0.10em open tracking and solid fill in yellow/red/white (no outline, drop shadow, or glow); short punchy curiosity-gap hook. Avoid hyperrealistic / 8k / unreal engine / masterpiece / highly detailed AI-slop language and look.";
 
 const QUALITY_DIRECTIVES =
-  "Design rules for maximum click-through: keep the layout clean and uncluttered; one dominant text hook only (2-4 words max), highly readable at phone size; subject face fills roughly one-third of the frame with exaggerated but photographic expression; limit background to one strong visual metaphor; use thick text stroke and high contrast; avoid tiny text, watermarks, overcrowded collage, glowing HUD overlays, and plastic over-smoothed surfaces; looks like a top-performing Indian documentary YouTube channel thumbnail shot on location, not a movie poster or game render.";
+  "Design rules for maximum click-through: keep the layout clean and uncluttered; one dominant text hook only (2-4 words max), highly readable at phone size; subject face fills roughly one-third of the frame with exaggerated but photographic expression; limit background to one strong visual metaphor; use open letter spacing and high contrast without stroke or heavy black weight; avoid tiny text, watermarks, overcrowded collage, glowing HUD overlays, and plastic over-smoothed surfaces; looks like a top-performing Indian documentary YouTube channel thumbnail shot on location, not a movie poster or game render.";
 
 export const COMPOSITION_HINTS: Record<string, string> = {
   center:
@@ -28,7 +28,9 @@ export function buildPrompt(
 ): string {
   const parts = [STYLE_CONTEXT, `Video topic: ${topic.trim()}`];
   if (hook) {
-    parts.push(`On-thumbnail text hook (render legibly): "${hook.toUpperCase()}"`);
+    parts.push(
+      `Paint this exact hook character-for-character exactly once: "${hook.trim()}". Use Montserrat SemiBold/Bold, Bebas Neue, Anton, Oswald SemiBold, or Helvetica Neue Bold at medium-bold weight with deliberate 0.06–0.10em open tracking and solid flat fill. Dynamically place it in clean negative space with ≥5% safe margins; never crop it or cover faces/products. No stroke, outline, drop shadow, glow, plate, banner, or scrim.`
+    );
   }
   if (composition && COMPOSITION_HINTS[composition]) {
     parts.push(COMPOSITION_HINTS[composition]);
@@ -42,7 +44,7 @@ export function buildPrompt(
       )
       .join("; ");
     parts.push(
-      `Use these top-performing YouTube thumbnails on similar channels as visual inspiration for layout, color energy, text placement, and click-through appeal: ${refs}. Match their proven patterns while keeping this channel's documentary style.`
+      `Use these top-performing YouTube thumbnails on similar channels as visual inspiration for layout, color energy, and text placement: ${refs}. Match their proven patterns while keeping this channel's documentary style. Never copy their wording or outline/stroke/shadow treatments.`
     );
   }
   parts.push(QUALITY_DIRECTIVES, STYLE_SUFFIX);

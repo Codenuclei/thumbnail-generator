@@ -1,8 +1,9 @@
 /**
  * YouTube thumbnail font engine — standalone typography module.
  *
- * Image models cannot load TTFs. This engine:
- *  1. Defines allowed font energy + placement zones
+ * Image models cannot load TTFs, but Gemini can paint typography from precise
+ * named-family references. This engine:
+ *  1. Defines allowed font references + placement zones
  *  2. Emits the exact prompt block the generator must follow
  *  3. Validates hook hygiene before generation
  *  4. Delegates post-render QA to thumbnail-verify (vision OCR + defect rubric)
@@ -16,32 +17,41 @@ import {
   type ThumbnailVerification,
 } from "@/lib/thumbnail-verify";
 
-/** Display-font energy the model should approximate (not real TTF loads). */
+/**
+ * Typography ownership feature flags.
+ *
+ * Keep the compositor/orchestrator implementation available for experiments,
+ * but production defaults to Gemini painting the exact hook in the image.
+ */
+export const GEMINI_PAINTS_HOOK_TEXT = true;
+export const POST_RENDER_TYPOGRAPHY_ENABLED = false;
+
+/** Accurate named-family references Gemini should approximate. */
 export const YOUTUBE_DISPLAY_FONTS = [
   {
-    id: "impact",
-    label: "Impact / Arial Black",
-    energy: "Impact / Arial Black — ultra-heavy condensed grotesk, ALL CAPS punch",
+    id: "sans-bold",
+    label: "Montserrat SemiBold / Bold",
+    energy: "Montserrat SemiBold or Montserrat Bold — medium-bold, crisp, geometric, phone-readable",
   },
   {
     id: "bebas",
     label: "Bebas Neue",
-    energy: "Bebas Neue — tall condensed display sans, clean geometric caps",
+    energy: "Bebas Neue — clean condensed display sans with open, readable capitals",
   },
   {
     id: "anton",
-    label: "Anton / Montserrat Black",
-    energy: "Anton / Montserrat Black — wide heavy display caps, strong presence",
+    label: "Anton",
+    energy: "Anton — strong clean display sans presence, but never simulated as ultra-heavy or black",
   },
   {
     id: "editorial",
-    label: "Editorial condensed",
-    energy: "Premium documentary condensed bold caps — clean, phone-readable",
+    label: "Oswald SemiBold",
+    energy: "Oswald SemiBold — premium documentary condensed sans, clean and phone-readable",
   },
   {
     id: "stacked",
-    label: "Stacked power",
-    energy: "Impact-energy dual power words — hierarchy via size, not decoration",
+    label: "Helvetica Neue Bold",
+    energy: "Helvetica Neue Bold — clean editorial sans; hierarchy via size, never decoration",
   },
 ] as const;
 
@@ -53,19 +63,19 @@ export const PLACEMENT_ZONES = [
     id: "lower-left",
     label: "Lower left",
     prompt:
-      "Place the hook in the lower-left negative space (left ~40%, bottom ~35%). Keep ≥4% safe margin from every edge. Subject/face stays clear on the right.",
+      "Prefer the lower-left only when it is the clearest negative space. Keep ≥5% safe margin from every edge. Subject/face stays clear on the right.",
   },
   {
     id: "upper-right",
     label: "Upper right",
     prompt:
-      "Place the hook in the upper-right negative space (right ~40%, top ~30%). Keep ≥4% safe margin. Subject stays clear on the left/lower frame.",
+      "Prefer the upper-right only when it is the clearest negative space. Keep ≥5% safe margin. Subject stays clear on the left/lower frame.",
   },
   {
     id: "upper-left",
     label: "Upper left",
     prompt:
-      "Place the hook in the upper-left negative space (left ~40%, top ~30%). Keep ≥4% safe margin. Never collide with a face or product silhouette.",
+      "Prefer the upper-left only when it is the clearest negative space. Keep ≥5% safe margin. Never collide with a face or product silhouette.",
   },
   {
     id: "lower-right",
@@ -99,11 +109,88 @@ export const HARD_BANS = [
   "NO invented captions beyond the exact hook",
   "NO collage / hard split seams unless composition explicitly says split",
   "NO thin, script, serif body, or handwritten lettering",
+  "NO drop shadow, glow, border, frame, or ultra-heavy/black weight",
+  "NO Impact Black or Arial Black styling",
+  "Use deliberate open tracking: approximately 0.06–0.10em; never tight, mashed, or touching",
 ] as const;
 
-/** Only legal text treatment. */
+/** Required treatment for Gemini-painted type (and any future compositor mode). */
 export const ALLOWED_TREATMENT =
-  "solid flat-color fill + soft per-letter OFFSET drop shadow only (shadow sits below/behind glyphs — never a rim hugging the letter edge)";
+  "solid flat-color fill with deliberate 0.06–0.10em open letter spacing; no stroke, outline, drop shadow, glow, border, plate, banner, or scrim";
+
+export const DEFAULT_TRACKING_EM = 0.08;
+export const DEFAULT_FONT_WEIGHT = 700;
+
+export type CompositeTextOptions = {
+  hook: string;
+  zoneId?: PlacementZoneId;
+  width?: number;
+  height?: number;
+  fill?: string;
+  fontFamily?: string;
+  fontWeight?: number;
+  trackingEm?: number;
+  /** Optional only — compositor defaults to no shadow. */
+  shadow?: boolean;
+  /** Embedded @font-face CSS for Sharp/librsvg. */
+  fontFaceCss?: string;
+  /**
+   * Fractional draw box from the placement orchestrator (0–1 of canvas).
+   * When set with honorPlacementBox, skips busyness zone re-picking.
+   */
+  placementBox?: {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    align: "start" | "end";
+  };
+  /** Prefer wrapping to this many lines when the hook is long. */
+  preferredLines?: 1 | 2;
+  /** Honour placementBox as-is (already clamped by master control). */
+  honorPlacementBox?: boolean;
+};
+
+/** Build an SVG overlay; Sharp composites this after Gemini returns the plate. */
+export function buildHookOverlaySvg(options: CompositeTextOptions): string {
+  const width = options.width ?? 1280;
+  const height = options.height ?? 720;
+  const hook = options.hook.replace(/\s+/g, " ").trim().toUpperCase();
+  const words = hook.split(" ").filter(Boolean);
+  const zone = PLACEMENT_ZONES.find((z) => z.id === options.zoneId) || PLACEMENT_ZONES[0];
+  const fontSize = Math.max(42, Math.min(120, Math.round(width * (words.length > 3 ? 0.07 : 0.09))));
+  const x = zone.id.includes("right") ? width * 0.94 : width * 0.06;
+  const anchor = zone.id.includes("right") ? "end" : "start";
+  const y = zone.id.includes("upper") ? height * 0.18 : zone.id.includes("mid") ? height * 0.55 : height * 0.84;
+  const lines =
+    words.length > 3
+      ? [
+          words.slice(0, Math.ceil(words.length / 2)).join(" "),
+          words.slice(Math.ceil(words.length / 2)).join(" "),
+        ]
+      : [hook];
+  // Always improved open tracking — never ultra-tight.
+  const tracking = Math.max(0.04, options.trackingEm ?? DEFAULT_TRACKING_EM);
+  const weight = Math.min(700, options.fontWeight ?? DEFAULT_FONT_WEIGHT);
+  const shadow = options.shadow ? `filter="url(#soft-shadow)"` : "";
+  const shadowDef = options.shadow
+    ? `<filter id="soft-shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="3" dy="4" stdDeviation="3" flood-color="#000" flood-opacity=".22"/></filter>`
+    : "";
+  const style = options.fontFaceCss
+    ? `<style type="text/css"><![CDATA[${options.fontFaceCss}]]></style>`
+    : "";
+  const text = lines
+    .map(
+      (line, index) =>
+        `<text x="${x}" y="${y + index * fontSize * 1.12}" text-anchor="${anchor}" font-family="${options.fontFamily || "Arial, Helvetica, sans-serif"}" font-size="${fontSize}px" font-weight="${weight}" letter-spacing="${tracking}em" fill="${options.fill || "#FFFFFF"}" ${shadow}>${escapeXml(line)}</text>`
+    )
+    .join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">${style}<defs>${shadowDef}</defs>${text}</svg>`;
+}
+
+function escapeXml(value: string): string {
+  return value.replace(/[<>&'"]/g, (char) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" })[char] || char);
+}
 
 /**
  * Distinct type looks per variant — always zero-outline, on-photo placement.
@@ -111,12 +198,12 @@ export const ALLOWED_TREATMENT =
  */
 export const FONT_ENGINE_VARIANTS = [
   {
-    id: "impact-lower-left",
-    fontId: "impact" as YoutubeDisplayFontId,
+    id: "sans-lower-left",
+    fontId: "sans-bold" as YoutubeDisplayFontId,
     zoneId: "lower-left" as PlacementZoneId,
-    label: "Impact lower-left",
+    label: "Clean bold lower-left",
     prompt:
-      "TYPE VARIANT — Impact / Arial Black energy, ALL CAPS, solid flat fill + soft OFFSET drop shadow (zero outline), 2–4 words, lower-left negative space. Clean single glyphs — no collisions, no ghost layer.",
+      "TYPE VARIANT — paint the exact hook in Montserrat SemiBold/Bold style, medium-bold, with deliberate 0.06–0.10em open tracking. Prefer lower-left negative space only if the scene supports it.",
   },
   {
     id: "bebas-upper-right",
@@ -124,7 +211,7 @@ export const FONT_ENGINE_VARIANTS = [
     zoneId: "upper-right" as PlacementZoneId,
     label: "Bebas upper-right stack",
     prompt:
-      "TYPE VARIANT — Bebas Neue / condensed sans, normal tracking (letters must not touch), Title Case or ALL CAPS, stacked 2 lines max, soft OFFSET drop shadow only (zero outline), upper-right third.",
+      "TYPE VARIANT — paint the exact hook in Bebas Neue style with deliberate 0.06–0.10em open tracking. Prefer the upper-right third only when it is clear negative space.",
   },
   {
     id: "anton-mid",
@@ -132,7 +219,7 @@ export const FONT_ENGINE_VARIANTS = [
     zoneId: "mid-band" as PlacementZoneId,
     label: "Anton mid-band",
     prompt:
-      "TYPE VARIANT — Anton / Montserrat Black feel, wide ALL CAPS across mid-frame, high-contrast solid fill on naturally dark or light photo pixels + soft OFFSET shadow. Text DIRECTLY on the photo — NEVER on a bar/box/banner. Zero outline. Even spacing; never double-print.",
+      "TYPE VARIANT — paint the exact hook in Anton style at medium-bold visual weight with deliberate 0.06–0.10em open tracking. Use a mid-frame band only when it does not cover the subject.",
   },
   {
     id: "compact-upper-left",
@@ -140,7 +227,7 @@ export const FONT_ENGINE_VARIANTS = [
     zoneId: "upper-left" as PlacementZoneId,
     label: "Compact upper-left",
     prompt:
-      "TYPE VARIANT — Condensed display sans, 2–3 words, upper-left corner punch, bold flat fill + soft OFFSET shadow, zero outline — phone-readable, never thin, never overlapping letters.",
+      "TYPE VARIANT — paint the exact hook in Oswald SemiBold style with deliberate 0.06–0.10em open tracking. Prefer upper-left only when it is clear negative space.",
   },
   {
     id: "editorial-opposite",
@@ -148,7 +235,7 @@ export const FONT_ENGINE_VARIANTS = [
     zoneId: "opposite-face" as PlacementZoneId,
     label: "Editorial opposite face",
     prompt:
-      "TYPE VARIANT — Clean bold condensed documentary caps — solid flat fill + soft OFFSET drop shadow only (zero outline), comfortable tracking, placed opposite the face/product.",
+      "TYPE VARIANT — paint the exact hook in Helvetica Neue Bold or Oswald SemiBold style with deliberate 0.06–0.10em open tracking, dynamically placed opposite the face/product.",
   },
   {
     id: "stacked-lower",
@@ -156,7 +243,7 @@ export const FONT_ENGINE_VARIANTS = [
     zoneId: "lower-left" as PlacementZoneId,
     label: "Stacked power lower",
     prompt:
-      "TYPE VARIANT — Two stacked power words (Impact energy), bottom-heavy placement, solid flat fill + soft OFFSET drop shadow (zero outline), top line slightly smaller. One clean render per line — no echo/ghost duplicates.",
+      "TYPE VARIANT — paint the exact hook in Montserrat SemiBold/Bold style. One line preferred; use two lines only if needed to fit. Keep deliberate 0.06–0.10em open tracking.",
   },
 ] as const;
 
@@ -233,13 +320,17 @@ export function buildFontEnginePromptBlock(options: {
 
   return [
     "FONT ENGINE (YouTube production typography — follow exactly):",
-    `Font energy: ${font.energy}`,
-    `Treatment (ONLY legal stack): ${ALLOWED_TREATMENT}`,
+    `PAINT THIS EXACT HOOK YOURSELF, character-for-character, exactly once: "${options.hook.trim()}"`,
+    "Do not translate, paraphrase, autocorrect, omit, add, duplicate, or invent characters. Render no other captions, labels, logos, watermarks, or pseudo-text.",
+    `Named font target for this variant: ${font.energy}`,
+    "Allowed named stylistic targets across variants: Montserrat SemiBold, Montserrat Bold, Bebas Neue, Anton, Oswald SemiBold, Helvetica Neue Bold. Use medium-bold only; never Impact Black, Arial Black, ultra-heavy, or black weight.",
+    `Required treatment: ${ALLOWED_TREATMENT}`,
     `HARD BANS: ${HARD_BANS.join("; ")}`,
     zone.prompt,
     variant.prompt,
-    `Hook text — spell EXACTLY, letter-for-letter, one clean pass, one place: "${hookCheck.normalized}"`,
-    "If the hook does not fit: wrap to 2 lines or shrink type — never crop, never misspell, never abbreviate.",
+    "DYNAMIC PLACEMENT: Analyze the finished scene and choose x/y placement from its real negative space. Keep every glyph ≥5% from every edge; never crop text or cover a face, eyes, mouth, or the primary product silhouette.",
+    "FIT: One line preferred, two lines maximum. Shrink or wrap the complete hook to fit; never truncate it. Keep visible breathing room between letters (roughly 0.06–0.10em).",
+    "SCENE: Keep one continuous photographic scene with no collage seams unless a split was explicitly requested.",
   ].join("\n");
 }
 

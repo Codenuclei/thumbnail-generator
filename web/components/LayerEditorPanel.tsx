@@ -315,7 +315,7 @@ export function LayerEditorPanel({
           >
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
-              {[400, 600, 700, 800, 900].map((weight) => (
+              {[400, 500, 600, 700].map((weight) => (
                 <SelectItem key={weight} value={String(weight)}>
                   {weight}
                 </SelectItem>
@@ -327,6 +327,13 @@ export function LayerEditorPanel({
             value={doc.defaultFont.size}
             onChange={(e) => updateDefaultFont({ size: Number(e.target.value) })}
             placeholder="Size %"
+          />
+          <Input
+            type="number"
+            value={doc.defaultFont.letterSpacing ?? 4}
+            onChange={(e) => updateDefaultFont({ letterSpacing: Number(e.target.value) })}
+            placeholder="Tracking px"
+            title="Open letter spacing (px)"
           />
           <Select
             value={doc.defaultFont.align}
