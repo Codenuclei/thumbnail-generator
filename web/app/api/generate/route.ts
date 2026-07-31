@@ -273,7 +273,8 @@ export async function POST(req: NextRequest) {
     const factorPool =
       compositionFactors.length > 0 ? compositionFactors : DEFAULT_FACTOR_IDS;
 
-    // Build 4 combinations: DISTINCT palette × layout × camera × type
+    // Build 4 combinations: DISTINCT palette × layout × camera × type.
+    // Subject activity stays optional and evidence-led inside buildUltraPrompt.
     // Never pad by repeating the same palette box — rotate accents if short.
     const palettesForVariants: ColorPaletteOption[] = [];
     if (selectedPalette) palettesForVariants.push(selectedPalette);

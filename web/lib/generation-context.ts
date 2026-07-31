@@ -100,13 +100,13 @@ export function buildGenerationContextBlock(input: GenerationContextInput): stri
   const liked = input.feedback?.filter((f) => f.rating === "like") || [];
   if (liked.length) {
     lines.push(
-      `LIKED REFS (${liked.length}): match their layout energy, type weight, and palette — not their unrelated subjects.`
+      `LIKED REFS (${liked.length}): match their layout energy, type weight, palette, and any topic-relevant action/pose/emotional energy — not their unrelated subjects.`
     );
   }
 
   if (input.selectedRefCount && input.selectedRefCount > 0) {
     lines.push(
-      `${input.selectedRefCount} research thumbnail(s) selected — study attached reference images for font energy, open tracking, and composition only. Paint only the user's exact hook; never copy reference wording. Never reproduce a reference 1:1 or carry over its outline, stroke, border, frame, plate, glow, or shadow treatment.`
+      `${input.selectedRefCount} research thumbnail(s) selected — study attached reference images for font energy, open tracking, composition, and any action/pose/emotional energy that is relevant to this topic. Do not copy unrelated subjects or force an action when none fits. Paint only the user's exact hook; never copy reference wording. Never reproduce a reference 1:1 or carry over its outline, stroke, border, frame, plate, glow, or shadow treatment.`
     );
   }
 

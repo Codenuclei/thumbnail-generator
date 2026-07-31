@@ -194,8 +194,23 @@ export function buildUltraPrompt(
     dryLessonsPromptBlock(),
     typeVariant.prompt,
     `Topic: ${topic.trim()}`,
-    "VARIANT DIVERSITY: This image MUST look different from sibling variants — different type treatment, framing decision, and camera look. Do not reuse the same font layout across variants.",
+    "OPTIONAL SUBJECT ACTIVITY: Do not force an action or pose. Add a meaningful activity only when the topic, exact hook, supplied media, or shared/liked reference thumbnails clearly call for one. If an action is used, it must be relevant to the topic and/or reference thumbnails — never an unrelated generic pose. Inspect attached selected/liked refs and the research style brief for observed actions, poses, and emotional beats; prefer adapting that relevant energy to this topic instead of inventing walking, pointing, working, presenting, or reacting merely for variety. When no action is clearly supported, use the most natural static portrait, expression, object-focused composition, environment, or product shot.",
+    "VARIANT DIVERSITY: This image MUST look different from sibling variants through an appropriate mix of type treatment, framing, camera look, subject placement, expression, focal object, environment, and composition. Activity is NOT required for diversity. If meaningful actions are supported, vary them across siblings when practical without sacrificing topic/reference relevance. Do not reuse the same font layout across variants.",
   ];
+
+  if (options.styleBrief) {
+    lines.push(
+      "ACTION/POSE EVIDENCE FROM RESEARCH (use only if it clearly supports an activity):",
+      `Emotional beat: ${options.styleBrief.emotionalHook}`,
+      `Creative direction: ${options.styleBrief.creativeDirection}`,
+      options.styleBrief.textPatterns.length
+        ? `Observed text/story patterns: ${options.styleBrief.textPatterns.slice(0, 5).join("; ")}`
+        : "",
+      options.styleBrief.doList.length
+        ? `Relevant observed directions: ${options.styleBrief.doList.slice(0, 5).join("; ")}`
+        : ""
+    );
+  }
 
   if (options.compositionFactorHint || options.compositionFactors?.length) {
     lines.push(
@@ -348,12 +363,12 @@ export function buildUltraPrompt(
       );
     } else if (hook) {
       lines.push(
-        `STRONGLY match patterns from user-liked references — especially hook FONTS (weight, case) and layout: ${likedRefs}`,
+        `STRONGLY match patterns from user-liked references — especially hook FONTS (weight, case), layout, and any topic-relevant action/pose/emotional energy: ${likedRefs}`,
         `Match the font energy closely while painting only the exact hook "${hook}". Do not copy reference words, pseudo-text, neon/glow, outline/stroke, border, plate, or shadow treatment. The final image must not be a 1:1 replica of any single liked reference.`
       );
     } else {
       lines.push(
-        `Liked references (palette + layout only — NO on-image text): ${likedRefs}`
+        `Liked references (palette + layout + any topic-relevant action/pose/emotional energy — NO on-image text): ${likedRefs}`
       );
     }
   }
@@ -379,7 +394,7 @@ export function buildUltraPrompt(
       );
     } else {
       lines.push(
-        `Additional references (layout/palette/fonts only — copy type energy, not subjects): ${refs}`
+        `Additional references (layout/palette/fonts plus any topic-relevant action/pose/emotional energy — adapt, never copy unrelated subjects): ${refs}`
       );
     }
   } else if (

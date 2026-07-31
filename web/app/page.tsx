@@ -16,7 +16,6 @@ import {
   buildGenerationContextSummary,
 } from "@/lib/generation-context";
 import { PalettePicker } from "@/components/PalettePicker";
-import { ColorPicker } from "@/components/ColorPicker";
 import type { EditorAsset } from "@/components/ThumbnailEditor";
 import type { ColorPaletteOption } from "@/lib/palette-types";
 import { applyPaletteToBrief } from "@/lib/palette-types";
@@ -1481,8 +1480,7 @@ export default function Home() {
   async function suggestPalettes(
     paletteFeedback?: string,
     likedOverride?: InspirationVideo[],
-    feedbackOverride?: ThumbnailFeedback[],
-    options?: { silent?: boolean }
+    feedbackOverride?: ThumbnailFeedback[]
   ) {
     const liked =
       likedOverride ||
@@ -1493,6 +1491,7 @@ export default function Home() {
     }
 
     setSuggestingPalettes(true);
+    const toastId = toast.loading("Generating palettes…");
     try {
       const res = await fetch("/api/palettes", {
         method: "POST",
@@ -1518,14 +1517,11 @@ export default function Home() {
       }
       if (next[0]) setSelectedPaletteId(next[0].id);
       // Do not auto-fill hook from palette styleBrief.
-      if (!options?.silent) {
-        const src = data.source === "pixels" || data.source === "pixels+gemini"
-          ? "sampled from liked thumbs"
-          : "fallback";
-        toast.success(`${next.length} palettes ${src}`);
-      }
+      toast.success("Palettes ready", { id: toastId });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Palette suggestion failed");
+      toast.error(err instanceof Error ? err.message : "Palette suggestion failed", {
+        id: toastId,
+      });
     } finally {
       setSuggestingPalettes(false);
     }
@@ -1538,16 +1534,16 @@ export default function Home() {
     const current = normalizeStudioTab(studioTab);
     setStudioTab(next);
 
-    // Only pick colors once the user is done liking refs and heads into Generate —
-    // never react per-like while they're still browsing/liking on Research or Style.
-    const enteringGenerate = next === "generate" && current !== "generate";
+    // Only pick colors once the user is done liking refs and heads into Style —
+    // never react per-like while they're still browsing/liking on Research.
+    const enteringStyle = next === "style" && current !== "style";
     if (
-      enteringGenerate &&
+      enteringStyle &&
       likedVideos.length > 0 &&
       !palettes.length &&
       !suggestingPalettes
     ) {
-      void suggestPalettes(undefined, undefined, undefined, { silent: true });
+      void suggestPalettes();
     }
   }
 
@@ -1589,7 +1585,7 @@ export default function Home() {
     // Like / dislike apply immediately so button state updates right away
     applyRating(item.videoId, mode, existingComment);
     if (mode === "like") {
-      toast.success("Liked — palettes suggest automatically once you head to Generate");
+      toast.success("Liked — palettes suggest automatically once you head to Style");
     } else {
       toast.success("Disliked");
     }
@@ -1932,8 +1928,8 @@ export default function Home() {
       return;
     }
 
-    if (likedVideos.length && !palettes.length) {
-      await suggestPalettes(undefined, undefined, undefined, { silent: true });
+    if (likedVideos.length && !palettes.length && !suggestingPalettes) {
+      void suggestPalettes();
     }
 
     setLoading(true);
@@ -2435,43 +2431,6 @@ export default function Home() {
         researchPanel={
           <div className="space-y-4">
             {(inspirations.length > 0 ||
-              likedVideos.length > 0 ||
-              palettes.length > 0 ||
-              Boolean(mediaIntelligence)) && (
-              <PalettePicker
-                palettes={palettes}
-                selectedId={selectedPaletteId}
-                loading={suggestingPalettes}
-                hasLikes={likedVideos.length > 0}
-                hasMediaColors={Boolean(mediaIntelligence?.palettes.length)}
-                sourceLabel={
-                  mediaIntelligence?.colors.source === "measured"
-                    ? "Measured from supplied media"
-                    : mediaIntelligence
-                      ? "Neutral fallback from content context"
-                      : "Extracted from liked thumbs"
-                }
-                paletteRatings={paletteRatings}
-                onSelect={(p) => {
-                  setSelectedPaletteId(p.id);
-                  setStyleBrief((prev) => applyPaletteToBrief(prev, p) || prev);
-                }}
-                onUpdate={(p) => {
-                  setPalettes((prev) => prev.map((x) => (x.id === p.id ? p : x)));
-                  setSelectedPaletteId(p.id);
-                  setStyleBrief((prev) => applyPaletteToBrief(prev, p) || prev);
-                }}
-                onSuggest={(note) => void suggestPalettes(note)}
-                onRatePalette={(id, rating) => {
-                  setPaletteRatings((prev) => ({
-                    ...prev,
-                    [id]: prev[id] === rating ? null : rating,
-                  }));
-                }}
-              />
-            )}
-
-            {(inspirations.length > 0 ||
               rejectedInspirations.length > 0 ||
               searching) && (
               <div className="space-y-4">
@@ -2515,8 +2474,8 @@ export default function Home() {
                   <div className="flex flex-wrap items-center gap-2 border-t border-[#efefef] pt-3">
                     <p className="type-caption text-[var(--text-tertiary)]">
                       {palettes.length > 0
-                        ? "Palettes ready — continue to Generate or refresh for new options."
-                        : "Done selecting? Head to Generate — palettes suggest automatically in the background."}
+                        ? "Palettes ready in Style — continue there or refresh for new options."
+                        : "Done selecting? Head to Style — palettes suggest automatically in the background."}
                     </p>
                     {palettes.length > 0 ? (
                       <Button
@@ -2578,6 +2537,46 @@ export default function Home() {
             />
 
             <BrandLanguagePanel language={brandLanguage} onChange={setBrandLanguage} />
+
+            <section className="space-y-3 border-t border-[#efefef] pt-5">
+              <div>
+                <h3 className="type-ui text-[#171618]">Color palette</h3>
+                <p className="mt-1 type-caption text-[var(--text-tertiary)]">
+                  Active colors for the next generation
+                </p>
+              </div>
+              <PalettePicker
+                palettes={palettes}
+                selectedId={selectedPaletteId}
+                loading={suggestingPalettes}
+                hasLikes={likedVideos.length > 0}
+                hasMediaColors={Boolean(mediaIntelligence?.palettes.length)}
+                sourceLabel={
+                  mediaIntelligence?.colors.source === "measured"
+                    ? "Measured from supplied media"
+                    : mediaIntelligence
+                      ? "Neutral fallback from content context"
+                      : "Extracted from liked thumbs"
+                }
+                paletteRatings={paletteRatings}
+                onSelect={(p) => {
+                  setSelectedPaletteId(p.id);
+                  setStyleBrief((prev) => applyPaletteToBrief(prev, p) || prev);
+                }}
+                onUpdate={(p) => {
+                  setPalettes((prev) => prev.map((x) => (x.id === p.id ? p : x)));
+                  setSelectedPaletteId(p.id);
+                  setStyleBrief((prev) => applyPaletteToBrief(prev, p) || prev);
+                }}
+                onSuggest={(note) => void suggestPalettes(note)}
+                onRatePalette={(id, rating) => {
+                  setPaletteRatings((prev) => ({
+                    ...prev,
+                    [id]: prev[id] === rating ? null : rating,
+                  }));
+                }}
+              />
+            </section>
 
             <section className="space-y-3 border-t border-[#efefef] pt-5">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2743,142 +2742,6 @@ export default function Home() {
                 </div>
               </form>
 
-              <div className="flex flex-wrap items-center justify-between gap-2 sm:col-span-2">
-                <Label>Active palette</Label>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  disabled={suggestingPalettes || likedVideos.length === 0}
-                  onClick={() => void suggestPalettes()}
-                >
-                  {suggestingPalettes ? (
-                    <LoaderCircle className="size-3.5 animate-spin" />
-                  ) : (
-                    <RefreshCw className="size-3.5" />
-                  )}
-                  Resuggest
-                </Button>
-              </div>
-
-              {palettes.length > 0 ? (
-                <div className="space-y-3">
-                  <div
-                    className="flex flex-wrap gap-1.5"
-                    role="radiogroup"
-                    aria-label="Active palette"
-                  >
-                    {palettes.map((p) => {
-                      const active = selectedPaletteId === p.id;
-                      return (
-                        <Button
-                          key={p.id}
-                          type="button"
-                          size="sm"
-                          role="radio"
-                          aria-checked={active}
-                          variant={active ? "default" : "outline"}
-                          className="gap-1.5 rounded-[var(--radius-buttons)]"
-                          onClick={() => {
-                            setSelectedPaletteId(p.id);
-                            setStyleBrief((prev) => applyPaletteToBrief(prev, p) || prev);
-                          }}
-                        >
-                          <span className="flex gap-0.5">
-                            {p.colors.slice(0, 4).map((c, i) => (
-                              <span
-                                key={`${p.id}-chip-${i}`}
-                                className="size-2.5 rounded-full border border-white/40"
-                                style={{ background: c.startsWith("#") ? c : `#${c}` }}
-                              />
-                            ))}
-                          </span>
-                          {p.name}
-                        </Button>
-                      );
-                    })}
-                  </div>
-                  {selectedPalette && (
-                    <div className="flex flex-wrap items-center gap-2">
-                      {selectedPalette.colors.map((c, index) => (
-                        <ColorPicker
-                          key={`${selectedPalette.id}-${index}`}
-                          compact
-                          label={`Color ${index + 1}`}
-                          value={c.startsWith("#") ? c : `#${c}`}
-                          onChange={(hex) => {
-                            const next = {
-                              ...selectedPalette,
-                              colors: selectedPalette.colors.map((color, i) =>
-                                i === index ? hex : color
-                              ),
-                              name: /custom/i.test(selectedPalette.name)
-                                ? selectedPalette.name
-                                : `${selectedPalette.name} · custom`,
-                            };
-                            setPalettes((prev) =>
-                              prev.map((x) => (x.id === next.id ? next : x))
-                            );
-                            setStyleBrief((prev) => applyPaletteToBrief(prev, next) || prev);
-                          }}
-                        />
-                      ))}
-                      {selectedPalette.rationale && (
-                        <span className="min-w-0 flex-1 truncate type-caption text-muted-foreground">
-                          {selectedPalette.rationale}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                (selectedPalette || styleBrief?.colorPalette?.length) && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="type-caption text-muted-foreground">
-                      {selectedPalette ? selectedPalette.name : "Palette"}
-                    </span>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {(selectedPalette?.colors || styleBrief?.colorPalette || []).map(
-                        (c, index) => (
-                          <ColorPicker
-                            key={`${selectedPalette?.id || "brief"}-${index}`}
-                            compact
-                            label={`Color ${index + 1}`}
-                            value={c.startsWith("#") ? c : `#${c}`}
-                            onChange={(hex) => {
-                              if (selectedPalette) {
-                                const next = {
-                                  ...selectedPalette,
-                                  colors: selectedPalette.colors.map((color, i) =>
-                                    i === index ? hex : color
-                                  ),
-                                  name: /custom/i.test(selectedPalette.name)
-                                    ? selectedPalette.name
-                                    : `${selectedPalette.name} · custom`,
-                                };
-                                setPalettes((prev) =>
-                                  prev.map((x) => (x.id === next.id ? next : x))
-                                );
-                                setStyleBrief(
-                                  (prev) => applyPaletteToBrief(prev, next) || prev
-                                );
-                                return;
-                              }
-                              if (styleBrief?.colorPalette?.length) {
-                                const colors = styleBrief.colorPalette.map((color, i) =>
-                                  i === index ? hex : color
-                                );
-                                setStyleBrief({ ...styleBrief, colorPalette: colors });
-                              }
-                            }}
-                          />
-                        )
-                      )}
-                    </div>
-                  </div>
-                )
-              )}
-
             {error && (
               <p className="rounded-lg border border-border bg-muted/50 px-3 py-2 type-caption text-muted-foreground">
               {error}
@@ -2984,11 +2847,6 @@ export default function Home() {
         }
       />
 
-      <StatusDialog
-        open={suggestingPalettes}
-        title="Picking colors from likes"
-        message="Reading liked thumbnail images to suggest palettes…"
-      />
     </>
   );
 }
