@@ -160,8 +160,9 @@ export function buildGenerationContextSummary(
   const hook = (input.hook || "").trim();
   const items: Array<{ label: string; value: string }> = [];
 
-  if (input.topicContext?.setting) {
-    items.push({ label: "Setting", value: input.topicContext.setting });
+  const setting = (input.topicContext?.setting || "").trim();
+  if (setting && !/^unknown\b/i.test(setting)) {
+    items.push({ label: "Setting", value: setting });
   }
   if (input.mediaIntelligence?.primarySubject) {
     items.push({ label: "Subject", value: input.mediaIntelligence.primarySubject });

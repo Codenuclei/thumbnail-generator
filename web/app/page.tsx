@@ -1828,7 +1828,7 @@ export default function Home() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        topic,
+        topic: topic.trim(),
         hook,
         composition: composition === "auto" ? "" : composition,
         model: model === "default" ? "" : model,
@@ -2839,8 +2839,8 @@ export default function Home() {
             ? "Generating variants inspired by your selected thumbnail…"
             : mediaIntelligence
               ? "Using media context, topic setting, and selected hook…"
-              : topicContext?.setting
-                ? `Grounding on "${topicContext.setting}" with liked refs and palette…`
+              : topic.trim()
+                ? `Grounding on "${topic.trim()}" with liked refs and palette…`
                 : useOpeningFrames
                   ? "Using full-video stills to build variants…"
                   : "Building 3-4 variants from research context and palette…"

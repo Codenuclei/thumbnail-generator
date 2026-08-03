@@ -349,7 +349,7 @@ If the query is a named event/sport/product, encode its real-world constraints (
     const parsed = parseJsonObject<Partial<TopicContext>>(text);
     const ctx: TopicContext = {
       whatItIs: String(parsed.whatItIs || query).trim(),
-      setting: String(parsed.setting || "").trim() || "unknown",
+      setting: String(parsed.setting || "").trim() || query.trim() || "topic",
       authenticVisuals: Array.isArray(parsed.authenticVisuals)
         ? parsed.authenticVisuals.map(String).filter(Boolean).slice(0, 10)
         : [],
@@ -390,7 +390,9 @@ If the query is a named event/sport/product, encode its real-world constraints (
     }
     return {
       whatItIs: query,
-      setting: "unknown — infer from query before filtering",
+      // Keep setting user-safe: this object is shown in UI status/context.
+      // Filtering still has the query in whatItIs + notes.
+      setting: query.trim() || "topic",
       authenticVisuals: [],
       rejectVisuals: [],
       notes:
