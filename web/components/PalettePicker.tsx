@@ -101,7 +101,7 @@ export function PalettePicker({
                   }
                 }}
                 className={cn(
-                  "group cursor-pointer rounded-[10px] border px-2.5 py-2 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[#171618]",
+                  "cursor-pointer rounded-[10px] border px-2.5 py-2 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[#171618]",
                   selected
                     ? "border-[#171618] bg-[#f7f7f7] ring-1 ring-[#171618]"
                     : "border-[#efefef] bg-white hover:border-[#727578]"
@@ -109,59 +109,36 @@ export function PalettePicker({
               >
                 <div className="flex items-center justify-between gap-2">
                   <p className="truncate type-caption font-medium text-[#171618]">{p.name}</p>
-                  <div
-                    className="flex shrink-0 items-center gap-0.5"
-                    onClick={(e) => e.stopPropagation()}
-                    onKeyDown={(e) => e.stopPropagation()}
-                  >
-                    <button
-                      type="button"
-                      className={cn(
-                        "rounded-full p-1 text-[#5c5e60] transition-opacity hover:text-[#171618]",
-                        "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
-                        selected && "opacity-100"
-                      )}
-                      aria-label="Edit palette colors"
-                      onClick={(e) => {
-                        if (!selected) onSelect(p);
-                        const card = (e.currentTarget as HTMLElement).closest(
-                          "[role=radio]"
-                        );
-                        const firstSwatch = card?.querySelector<HTMLButtonElement>(
-                          'button[aria-label*="color wheel"]'
-                        );
-                        firstSwatch?.click();
-                      }}
+                  {hasLikes && (
+                    <div
+                      className="flex shrink-0 items-center gap-0.5"
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
                     >
-                      <Pencil className="size-3.5" />
-                    </button>
-                    {hasLikes && (
-                      <>
-                        <button
-                          type="button"
-                          className={cn(
-                            "rounded-full p-1",
-                            rating === "like" ? "text-[#004d60]" : "text-[#5c5e60]"
-                          )}
-                          onClick={() => onRatePalette(p.id, "like")}
-                          aria-label="Like palette"
-                        >
-                          <ThumbsUp className="size-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          className={cn(
-                            "rounded-full p-1",
-                            rating === "dislike" ? "text-[#ff3e00]" : "text-[#5c5e60]"
-                          )}
-                          onClick={() => onRatePalette(p.id, "dislike")}
-                          aria-label="Dislike palette"
-                        >
-                          <ThumbsDown className="size-3.5" />
-                        </button>
-                      </>
-                    )}
-                  </div>
+                      <button
+                        type="button"
+                        className={cn(
+                          "rounded-full p-1",
+                          rating === "like" ? "text-[#004d60]" : "text-[#5c5e60]"
+                        )}
+                        onClick={() => onRatePalette(p.id, "like")}
+                        aria-label="Like palette"
+                      >
+                        <ThumbsUp className="size-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        className={cn(
+                          "rounded-full p-1",
+                          rating === "dislike" ? "text-[#ff3e00]" : "text-[#5c5e60]"
+                        )}
+                        onClick={() => onRatePalette(p.id, "dislike")}
+                        aria-label="Dislike palette"
+                      >
+                        <ThumbsDown className="size-3.5" />
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div
@@ -172,16 +149,26 @@ export function PalettePicker({
                   }}
                 >
                   {p.colors.map((c, index) => (
-                    <ColorPicker
+                    <div
                       key={`${p.id}-${index}`}
-                      compact
-                      label={`Color ${index + 1}`}
-                      value={c.startsWith("#") ? c : `#${c}`}
-                      onChange={(hex) => {
-                        if (!selected) onSelect(p);
-                        updateColor(p, index, hex);
-                      }}
-                    />
+                      className="group/swatch relative inline-flex"
+                    >
+                      <ColorPicker
+                        compact
+                        label={`Color ${index + 1}`}
+                        value={c.startsWith("#") ? c : `#${c}`}
+                        onChange={(hex) => {
+                          if (!selected) onSelect(p);
+                          updateColor(p, index, hex);
+                        }}
+                      />
+                      <span
+                        aria-hidden
+                        className="pointer-events-none absolute left-0 top-0 flex size-8 items-center justify-center rounded-full bg-black/40 opacity-0 transition-opacity group-hover/swatch:opacity-100 group-focus-within/swatch:opacity-100"
+                      >
+                        <Pencil className="size-3 text-white" strokeWidth={2.5} />
+                      </span>
+                    </div>
                   ))}
                   {selected && (
                     <span className="type-caption text-[#004d60]">Selected</span>
