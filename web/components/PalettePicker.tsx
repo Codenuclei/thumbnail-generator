@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ColorPicker } from "@/components/ColorPicker";
 import { cn } from "@/lib/utils";
-import { LoaderCircle, Sparkles, ThumbsDown, ThumbsUp } from "lucide-react";
+import { LoaderCircle, Pencil, Sparkles, ThumbsDown, ThumbsUp } from "lucide-react";
 import { useState } from "react";
 
 type Props = {
@@ -101,7 +101,7 @@ export function PalettePicker({
                   }
                 }}
                 className={cn(
-                  "cursor-pointer rounded-[10px] border px-2.5 py-2 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[#171618]",
+                  "group cursor-pointer rounded-[10px] border px-2.5 py-2 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[#171618]",
                   selected
                     ? "border-[#171618] bg-[#f7f7f7] ring-1 ring-[#171618]"
                     : "border-[#efefef] bg-white hover:border-[#727578]"
@@ -109,36 +109,59 @@ export function PalettePicker({
               >
                 <div className="flex items-center justify-between gap-2">
                   <p className="truncate type-caption font-medium text-[#171618]">{p.name}</p>
-                  {hasLikes && (
-                    <div
-                      className="flex shrink-0 gap-0.5"
-                      onClick={(e) => e.stopPropagation()}
-                      onKeyDown={(e) => e.stopPropagation()}
+                  <div
+                    className="flex shrink-0 items-center gap-0.5"
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      className={cn(
+                        "rounded-full p-1 text-[#5c5e60] transition-opacity hover:text-[#171618]",
+                        "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+                        selected && "opacity-100"
+                      )}
+                      aria-label="Edit palette colors"
+                      onClick={(e) => {
+                        if (!selected) onSelect(p);
+                        const card = (e.currentTarget as HTMLElement).closest(
+                          "[role=radio]"
+                        );
+                        const firstSwatch = card?.querySelector<HTMLButtonElement>(
+                          'button[aria-label*="color wheel"]'
+                        );
+                        firstSwatch?.click();
+                      }}
                     >
-                      <button
-                        type="button"
-                        className={cn(
-                          "rounded-full p-1",
-                          rating === "like" ? "text-[#004d60]" : "text-[#5c5e60]"
-                        )}
-                        onClick={() => onRatePalette(p.id, "like")}
-                        aria-label="Like palette"
-                      >
-                        <ThumbsUp className="size-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        className={cn(
-                          "rounded-full p-1",
-                          rating === "dislike" ? "text-[#ff3e00]" : "text-[#5c5e60]"
-                        )}
-                        onClick={() => onRatePalette(p.id, "dislike")}
-                        aria-label="Dislike palette"
-                      >
-                        <ThumbsDown className="size-3.5" />
-                      </button>
-                    </div>
-                  )}
+                      <Pencil className="size-3.5" />
+                    </button>
+                    {hasLikes && (
+                      <>
+                        <button
+                          type="button"
+                          className={cn(
+                            "rounded-full p-1",
+                            rating === "like" ? "text-[#004d60]" : "text-[#5c5e60]"
+                          )}
+                          onClick={() => onRatePalette(p.id, "like")}
+                          aria-label="Like palette"
+                        >
+                          <ThumbsUp className="size-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          className={cn(
+                            "rounded-full p-1",
+                            rating === "dislike" ? "text-[#ff3e00]" : "text-[#5c5e60]"
+                          )}
+                          onClick={() => onRatePalette(p.id, "dislike")}
+                          aria-label="Dislike palette"
+                        >
+                          <ThumbsDown className="size-3.5" />
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
 
                 <div
