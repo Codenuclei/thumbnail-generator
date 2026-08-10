@@ -1,0 +1,117 @@
+# Manual-only Cohesivity Railway deploy.
+# Does NOT run on push/PR — collaborators with write access trigger it from Actions.
+name: Deploy Cohesivity
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Confirm target environment (must be production)
+        required: true
+        type: choice
+        default: production
+        options:
+          - production
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-cohesivity-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Cohesivity Railway
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Confirm production
+        if: ${{ inputs.environment != 'production' }}
+        run: |
+          echo "::error::Refusing deploy: environment must be 'production' (got '${{ inputs.environment }}')."
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Write .cohesivity from secrets
+        env:
+          COH_MANAGEMENT_KEY: ${{ secrets.COH_MANAGEMENT_KEY }}
+          COH_APPLICATION_KEY: ${{ secrets.COH_APPLICATION_KEY }}
+          TENANT_ID: ${{ secrets.TENANT_ID }}
+        run: |
+          missing=0
+          if [ -z "$COH_MANAGEMENT_KEY" ]; then
+            echo "::error::Secret COH_MANAGEMENT_KEY is not set. Add it in Settings → Secrets and variables → Actions."
+            missing=1
+          fi
+          if [ -z "$COH_APPLICATION_KEY" ]; then
+            echo "::error::Secret COH_APPLICATION_KEY is not set. Add it in Settings → Secrets and variables → Actions."
+            missing=1
+          fi
+          if [ -z "$TENANT_ID" ]; then
+            echo "::error::Secret TENANT_ID is not set. Add it in Settings → Secrets and variables → Actions."
+            missing=1
+          fi
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+          # Keys match deploy_railway.py / local .cohesivity (never commit that file).
+          umask 077
+          {
+            printf 'coh_management_key=%s\n' "$COH_MANAGEMENT_KEY"
+            printf 'coh_application_key=%s\n' "$COH_APPLICATION_KEY"
+            printf 'tenant_id=%s\n' "$TENANT_ID"
+          } > .cohesivity
+
+      - name: Write optional app env for Railway upsert
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          APIFY_API_TOKEN: ${{ secrets.APIFY_API_TOKEN }}
+          CANVA_CLIENT_ID: ${{ secrets.CANVA_CLIENT_ID }}
+          CANVA_CLIENT_SECRET: ${{ secrets.CANVA_CLIENT_SECRET }}
+          FIGMA_CLIENT_ID: ${{ secrets.FIGMA_CLIENT_ID }}
+          FIGMA_CLIENT_SECRET: ${{ secrets.FIGMA_CLIENT_SECRET }}
+          FIGMA_ACCESS_TOKEN: ${{ secrets.FIGMA_ACCESS_TOKEN }}
+          YT_WORKER_SECRET: ${{ secrets.YT_WORKER_SECRET }}
+        run: |
+          umask 077
+          : > .env
+          for key in \
+            GEMINI_API_KEY \
+            APIFY_API_TOKEN \
+            CANVA_CLIENT_ID \
+            CANVA_CLIENT_SECRET \
+            FIGMA_CLIENT_ID \
+            FIGMA_CLIENT_SECRET \
+            FIGMA_ACCESS_TOKEN \
+            YT_WORKER_SECRET
+          do
+            val="${!key}"
+            if [ -n "$val" ]; then
+              printf '%s=%s\n' "$key" "$val" >> .env
+              echo "Including optional secret: $key"
+            else
+              echo "Optional secret not set (skipped): $key"
+            fi
+          done
+
+      - name: Deploy via deploy_railway.py
+        run: python deploy_railway.py
+
+      - name: Show deploy URL artifact paths
+        if: success()
+        run: |
+          if [ -f DEPLOY_URL.txt ]; then
+            echo "DEPLOY_URL=$(cat DEPLOY_URL.txt)"
+          fi
+          if [ -f RAILWAY_URL.txt ]; then
+            echo "RAILWAY_URL=$(cat RAILWAY_URL.txt)"
+          fi

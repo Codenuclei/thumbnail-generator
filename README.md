@@ -51,3 +51,7 @@ Default image model: `gemini-2.5-flash-image`
 2. Builds a style-aware prompt from your 21 reference thumbnails
 3. Calls `POST generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
 4. Extracts the image from `inlineData` and saves to `output/`
+
+## Deploy (Cohesivity)
+
+Production deploys are **manual only** via GitHub Actions (`workflow_dispatch`) — not on every commit. See [docs/deploy-cohesivity-gha.md](docs/deploy-cohesivity-gha.md).
