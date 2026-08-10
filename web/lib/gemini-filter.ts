@@ -16,10 +16,14 @@ const FILTER_MODELS = [
   "gemini-2.5-flash",
 ] as const;
 
-/** Light-filter feed size shown to the user after context/vision drops. */
-export const LIGHT_FILTER_RESULTS = 8;
-/** Fetch this many YouTube hits before context/vision curation in light mode. */
-export const LIGHT_FILTER_POOL = 20;
+/** Minimum research thumbs shown (YouTube order, no Gemini cull). */
+export const LIGHT_FILTER_RESULTS = 56;
+/** Fetch at least this many YouTube hits for the research grid. */
+export const LIGHT_FILTER_POOL = 64;
+
+function sortByViewsDescending(videos: ScrapedVideo[]): ScrapedVideo[] {
+  return [...videos].sort((a, b) => (b.viewCount || 0) - (a.viewCount || 0));
+}
 
 export type GeminiFilterMode = "strict" | "light";
 
@@ -402,8 +406,7 @@ If the query is a named event/sport/product, encode its real-world constraints (
 }
 
 /**
- * Light mode: YouTube order preserved. Drop off-title AND wrong visual context
- * (using topic context + thumbnail images).
+ * Light mode: relevance/context filter, then sort kept results by views descending.
  */
 async function filterLightTopResults(
   title: string,
@@ -417,8 +420,8 @@ async function filterLightTopResults(
   }
 ): Promise<GeminiFilterResult> {
   const { apiKey, channelHandles, hook, targetCount, topicContext } = options;
-  // Larger pool so drops still leave a full top-N in YouTube order.
-  const pool = videos.slice(0, Math.max(targetCount * 2 + 4, LIGHT_FILTER_POOL));
+  // Larger pool so relevance drops still leave ~40–50 kept refs after view sort.
+  const pool = videos.slice(0, Math.max(targetCount * 2, LIGHT_FILTER_POOL));
 
   if (!pool.length) {
     return {
@@ -433,7 +436,9 @@ async function filterLightTopResults(
     };
   }
 
-  const { parts: thumbParts, withThumbs } = await buildThumbParts(pool, pool.length);
+  // Cap vision attachments for latency; remaining candidates are judged from title/catalog.
+  const visionLimit = Math.min(36, pool.length);
+  const { parts: thumbParts, withThumbs } = await buildThumbParts(pool, visionLimit);
   console.log(`[gemini-filter] light vision thumbs=${withThumbs}/${pool.length}`);
 
   const prompt = `You curate YouTube thumbnail REFERENCES for research. First understand the topic, then filter.
@@ -443,10 +448,11 @@ ${hook ? `User notes:\n${hook}` : ""}
 
 ${formatTopicContext(topicContext)}
 
-Candidate list (YouTube Relevance order — preserve this order for keptIds):
+Candidate list (YouTube Relevance order — filter for relevance only; server will re-sort kept by views):
 ${buildCatalog(pool, channelHandles)}
 
-Thumbnail images follow, each labeled with id=…
+Thumbnail images follow for the first ${visionLimit} candidates, each labeled with id=…
+Judge the rest from title/channel/views in the catalog.
 
 REJECT a candidate if ANY of these are true:
 1. Title/subject is clearly NOT about "${title}" / the topic context.
@@ -460,14 +466,14 @@ KEEP when:
 
 RULES:
 - Default is NOT "keep everything" — wrong visual context must go.
-- Do NOT reorder. Return keptIds in the SAME YouTube order as the candidate list.
+- Prefer keeping up to ${targetCount} relevant ones (aim for 40–50 when enough qualify).
 - NEVER invent videoIds.
-- Prefer keeping up to ${targetCount} good ones; if fewer qualify, return fewer — never pad with rejects.
-- Do not reject only for low views or clickbait style.
+- If fewer qualify, return fewer — never pad with rejects.
+- Do not reject only for low views or clickbait style (views are used for sorting after you filter).
 
 Return ONLY JSON:
 {
-  "keptIds": ["videoId in original YouTube order"],
+  "keptIds": ["videoId of relevant candidates"],
   "rejectedIds": ["videoId"],
   "rejected": [{"id": "videoId", "reason": "short reason e.g. outdoor track / wrong sport / off-title"}],
   "channelKept": 0,
@@ -487,12 +493,15 @@ Return ONLY JSON:
     const text = await geminiGenerate(
       apiKey,
       [{ text: prompt }, ...thumbParts],
-      { temperature: 0, maxOutputTokens: 1400, timeoutMs: 55_000 }
+      { temperature: 0, maxOutputTokens: 4096, timeoutMs: 90_000 }
     );
     const parsed = parseJsonObject<GeminiFilterResponse>(text);
-    // Visual/domain rejects stick — do not restore via title-match score.
-    const finalList = preserveYoutubeOrder(pool, parsed).slice(0, targetCount);
-    const kept = finalList.length ? finalList : pool.slice(0, targetCount);
+    // Keep relevance order from Gemini, then rank by views high → low for the UI.
+    const relevant = preserveYoutubeOrder(pool, parsed);
+    const kept = sortByViewsDescending(relevant.length ? relevant : pool).slice(
+      0,
+      targetCount
+    );
     const rejectedVideos = getRejectedVideos(pool, parsed, kept);
 
     return {
@@ -503,7 +512,7 @@ Return ONLY JSON:
         ...emptyBrief(title, hook),
         summary:
           parsed.summary ||
-          `Top ${kept.length || targetCount} context-filtered results for "${title}".`,
+          `Top ${kept.length || targetCount} relevant results for "${title}" (views descending).`,
         typography: parsed.typography || emptyBrief(title, hook).typography,
         composition: parsed.composition || emptyBrief(title, hook).composition,
         creativeDirection:
@@ -530,7 +539,7 @@ Return ONLY JSON:
     };
   } catch (err) {
     console.error("Gemini light filter error:", err);
-    const fallback = pool.slice(0, targetCount);
+    const fallback = sortByViewsDescending(pool).slice(0, targetCount);
     return {
       videos: fallback,
       rejectedVideos: [],
@@ -539,8 +548,8 @@ Return ONLY JSON:
         creativeDirection: `${topicContext.whatItIs}. Setting: ${topicContext.setting}.`,
         avoidList: topicContext.rejectVisuals.slice(0, 5),
       },
-      titleSuggestions: pool.slice(0, 3).map((v) => v.title),
-      filteredCount: videos.length - Math.min(pool.length, targetCount),
+      titleSuggestions: fallback.slice(0, 3).map((v) => v.title),
+      filteredCount: videos.length - fallback.length,
       qualityRejected: 0,
       channelStats: { kept: 0, droppedOffTopic: 0 },
       topicContext,
@@ -593,7 +602,7 @@ export async function filterAndCurateWithGemini(
   }
 
   if (!apiKey) {
-    const sorted = videos.slice(0, targetCount);
+    const sorted = sortByViewsDescending(videos).slice(0, targetCount);
     return {
       videos: sorted,
       rejectedVideos: [],
@@ -728,8 +737,8 @@ Return ONLY JSON:
     const parsed = parseJsonObject<GeminiFilterResponse>(text);
     // Visual/domain rejects stick; only soft title-score for leftover noise.
     const orderedKept = preserveYoutubeOrder(videos, parsed);
-    // Domain/visual rejects already applied — do not resurrect them via title score.
-    const kept = orderedKept.slice(0, targetCount);
+    // Relevance first, then views high → low for the research grid.
+    const kept = sortByViewsDescending(orderedKept).slice(0, targetCount);
     const rejectedVideos = getRejectedVideos(videos, parsed, kept);
     const rejectedCount = rejectedVideos.length || parsed.rejectedIds?.length || videos.length - kept.length;
 
@@ -776,10 +785,12 @@ Return ONLY JSON:
     };
   } catch (err) {
     console.error("Gemini filter error:", err);
-    const fallback = videos
-      .filter((v) => scoreTopicMatch(title, v) > 0)
-      .slice(0, targetCount);
-    const safe = fallback.length ? fallback : videos.slice(0, targetCount);
+    const fallback = sortByViewsDescending(
+      videos.filter((v) => scoreTopicMatch(title, v) > 0)
+    ).slice(0, targetCount);
+    const safe = fallback.length
+      ? fallback
+      : sortByViewsDescending(videos).slice(0, targetCount);
     return {
       videos: safe,
       rejectedVideos: [],

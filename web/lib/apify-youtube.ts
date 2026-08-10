@@ -5,7 +5,7 @@ import { runtimeEnv } from "@/lib/runtime-env";
 const ACTOR_ID = "streamers~youtube-scraper";
 const APIFY_BASE = "https://api.apify.com/v2";
 const APIFY_TIMEOUT_MS = 40_000;
-export const TARGET_RESULTS = 6;
+export const TARGET_RESULTS = 45;
 /** How many landscape Apify candidates to pass into Gemini quality filter. */
 export const APIFY_POOL_SIZE = 25;
 

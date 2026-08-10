@@ -176,14 +176,14 @@ export function MediaIntelligencePanel({
               className="type-caption font-normal text-[#5c5e60]"
             >
               Reference photos{" "}
-              <span className="text-[var(--text-tertiary)]">optional, up to 4</span>
+              <span className="text-[var(--text-tertiary)]">optional, up to 12</span>
             </Label>
             <Button
               type="button"
               variant="outline"
               size="sm"
               className="h-7 px-2 type-caption"
-              disabled={photos.length >= 4}
+              disabled={photos.length >= 12}
               onClick={() => document.getElementById("media-photo-upload")?.click()}
             >
               <ImagePlus className="size-3" />

@@ -379,18 +379,35 @@ Provide exactly 4 palettes. Every hex MUST appear in MEASURED SWATCHES (case-ins
   }
 }
 
-/** Attach liked thumbnail images as generation reference assets (max 3). */
+/**
+ * Attach liked research thumbs as style samples.
+ * Count = how many the user liked (caller passes `max` from remaining attach budget
+ * after custom media / opening frames — no fixed "3 likes" hard limit).
+ */
 export async function likedThumbsAsAssets(
-  videos: InspirationVideo[]
+  videos: InspirationVideo[],
+  options?: {
+    max?: number;
+    commentsByVideoId?: Map<string, string> | Record<string, string>;
+  }
 ): Promise<Array<{ mimeType: string; data: string; label: string }>> {
+  const max = Math.max(0, options?.max ?? videos.length);
+  const comments = options?.commentsByVideoId;
+  const getComment = (id: string) => {
+    if (!comments) return "";
+    if (comments instanceof Map) return comments.get(id) || "";
+    return comments[id] || "";
+  };
   const assets: Array<{ mimeType: string; data: string; label: string }> = [];
-  for (const v of videos.slice(0, 3)) {
+  for (const v of videos.slice(0, max)) {
     const img = await fetchThumbnailBuffer(v.thumbnailUrl, v.videoId);
     if (img) {
+      const why = getComment(v.videoId).trim();
+      const base = `Liked style sample (do not clone): ${v.title.slice(0, 48)}`;
       assets.push({
         mimeType: img.mimeType,
         data: img.data,
-        label: `Liked ref: ${v.title.slice(0, 60)}`,
+        label: why ? `${base} — why: ${why.slice(0, 80)}` : base,
       });
     }
   }

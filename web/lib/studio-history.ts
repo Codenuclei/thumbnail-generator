@@ -6,6 +6,7 @@ import type {
 import type { EditorDocument } from "@/lib/editor-types";
 import type { BrandLanguage } from "@/lib/brand-language";
 import type { ChannelProfile } from "@/lib/channel-profile";
+import type { CreativeDirection } from "@/lib/creative-directions";
 
 export type StudioIteration = {
   image: string;
@@ -14,10 +15,13 @@ export type StudioIteration = {
   index: number;
 };
 
+/** A saved project = prior studio work with generations, media, and directions. */
 export type StudioSession = {
   id: string;
   createdAt: number;
   updatedAt: number;
+  /** Display name in Projects; defaults to topic when empty. */
+  projectName?: string;
   topic: string;
   channels: string;
   hook: string;
@@ -34,6 +38,8 @@ export type StudioSession = {
   iterations: StudioIteration[];
   generatedVariants: GeneratedVariant[];
   titleSuggestions: string[];
+  /** Per-version creative directions used for generation. */
+  directions?: CreativeDirection[];
   mediaYoutubeUrl?: string;
   mediaScript?: string;
   mediaPhotos?: PersistedMediaPhoto[];
@@ -60,6 +66,8 @@ export type StudioDraft = {
   masterPromptCustomized?: boolean;
   compositionFactors: string[];
   useOpeningFrames: boolean;
+  directions?: CreativeDirection[];
+  projectName?: string;
   mediaYoutubeUrl?: string;
   mediaScript?: string;
   mediaPhotos?: PersistedMediaPhoto[];
@@ -166,6 +174,8 @@ export type SharePayload = {
   iterations: StudioIteration[];
   generatedVariants: GeneratedVariant[];
   titleSuggestions: string[];
+  projectName?: string;
+  directions?: CreativeDirection[];
   mediaYoutubeUrl?: string;
   mediaScript?: string;
   mediaPhotos?: PersistedMediaPhoto[];
@@ -193,6 +203,8 @@ export function buildSharePayload(session: Omit<StudioSession, "id" | "createdAt
     iterations: session.iterations,
     generatedVariants: session.generatedVariants,
     titleSuggestions: session.titleSuggestions,
+    projectName: session.projectName,
+    directions: session.directions,
     mediaYoutubeUrl: session.mediaYoutubeUrl,
     mediaScript: session.mediaScript,
     mediaPhotos: session.mediaPhotos,
@@ -201,6 +213,20 @@ export function buildSharePayload(session: Omit<StudioSession, "id" | "createdAt
     brandLanguage: session.brandLanguage,
     channelProfile: session.channelProfile,
   };
+}
+
+export function renameHistorySession(id: string, projectName: string): void {
+  if (typeof window === "undefined") return;
+  const session = getHistorySession(id);
+  if (!session) return;
+  saveHistorySession(
+    { ...session, projectName: projectName.trim() || session.topic },
+    { bumpUpdatedAt: false }
+  );
+}
+
+export function projectDisplayName(session: StudioSession): string {
+  return (session.projectName || session.topic || "Untitled project").trim();
 }
 
 /** Keep full analysis useful while preventing captions from exhausting localStorage/share URLs. */

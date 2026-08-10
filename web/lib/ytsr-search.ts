@@ -27,7 +27,7 @@ const YT_INDIA_RELEVANCE_SP = "CAA%253D";
 const YT_INDIA_COOKIE = "PREF=gl=IN&hl=en; SOCS=CAI";
 
 /** Candidate pool passed to Gemini quality filter. */
-export const SEARCH_POOL_SIZE = 40;
+export const SEARCH_POOL_SIZE = 80;
 const MIN_POOL_BEFORE_GEMINI = 8;
 
 type YtsrContext = {
@@ -507,30 +507,29 @@ async function fetchSearchViaYoutubeHtml(query: string, limit: number): Promise<
 
 /**
  * Exact YouTube search: sends the user text as-is, returns hits in YouTube UI order.
- * Prefers youtube.com HTML ranking (matches what users see); falls back to InnerTube.
+ * Prefers youtube.com HTML ranking for the first page, then fills to `target` via
+ * InnerTube continuations (no relevance re-rank, no Gemini).
  */
 export async function searchYouTubeExact(
   query: string,
   options?: { target?: number }
-): Promise<{ videos: ScrapedVideo[]; query: string; source: "youtube-html" | "innertube" }> {
+): Promise<{
+  videos: ScrapedVideo[];
+  query: string;
+  source: "youtube-html" | "innertube" | "youtube-html+innertube";
+}> {
   const q = query.trim();
   if (!q) return { videos: [], query: q, source: "youtube-html" };
 
-  const target = options?.target ?? 8;
-  const fetchLimit = Math.max(target * 4, 32);
+  const target = Math.max(options?.target ?? 56, 50);
+  const fetchLimit = Math.max(target + 24, 80);
+
+  let videos: ScrapedVideo[] = [];
+  let source: "youtube-html" | "innertube" | "youtube-html+innertube" = "innertube";
 
   try {
-    const videos = await fetchSearchViaYoutubeHtml(q, fetchLimit);
-    if (videos.length >= Math.min(target, 4)) {
-      console.log(
-        `[youtube-exact] source=html query=${JSON.stringify(q)} returned=${videos.length}`
-      );
-      return {
-        videos: videos.slice(0, Math.max(target, 16)),
-        query: q,
-        source: "youtube-html",
-      };
-    }
+    videos = await fetchSearchViaYoutubeHtml(q, fetchLimit);
+    if (videos.length) source = "youtube-html";
   } catch (err) {
     console.warn(
       `[youtube-exact] html failed, falling back to innertube:`,
@@ -538,14 +537,37 @@ export async function searchYouTubeExact(
     );
   }
 
-  const videos = await searchQuery(q, fetchLimit);
+  if (videos.length < target) {
+    try {
+      const parsed = await fetchSearchPage(q, fetchLimit);
+      const innertube = parsed.filter(isLandscapeCandidate).map(toScrapedVideo);
+      const seen = new Set(videos.map((v) => v.videoId));
+      for (const video of innertube) {
+        if (seen.has(video.videoId)) continue;
+        seen.add(video.videoId);
+        videos.push(video);
+        if (videos.length >= fetchLimit) break;
+      }
+      if (source === "youtube-html" && innertube.length) {
+        source = "youtube-html+innertube";
+      } else if (!videos.length) {
+        source = "innertube";
+      }
+    } catch (err) {
+      console.warn(
+        `[youtube-exact] innertube fill failed:`,
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+
   console.log(
-    `[youtube-exact] source=innertube query=${JSON.stringify(q)} returned=${videos.length}`
+    `[youtube-exact] source=${source} query=${JSON.stringify(q)} returned=${videos.length} target=${target}`
   );
   return {
-    videos: videos.slice(0, Math.max(target, 16)),
+    videos: videos.slice(0, Math.max(target, videos.length)),
     query: q,
-    source: "innertube",
+    source,
   };
 }
 
@@ -656,9 +678,12 @@ export async function searchLongFormViaYtsr(
     hook?: string;
     /** Pre-built queries — skips buildExpandedSearchQueries when provided. */
     queries?: string[];
+    /** Skip topic-score cull and view re-rank — keep fetch order (for 50+ unfiltered research). */
+    unfiltered?: boolean;
   }
 ): Promise<ScrapedVideo[]> {
   const target = options?.target ?? SEARCH_POOL_SIZE;
+  const unfiltered = Boolean(options?.unfiltered);
   const channelsRaw = options?.channels?.trim() || "";
   const handles = channelsRaw ? parseChannelHandles(channelsRaw) : [];
 
@@ -725,14 +750,21 @@ export async function searchLongFormViaYtsr(
     videos = await supplementWithApify(topic, channelsRaw || undefined, videos, channelVideoIds);
   }
 
-  videos = filterByTopicRelevance(topic, videos);
+  if (!unfiltered) {
+    videos = filterByTopicRelevance(topic, videos);
+  }
   videos = await applyLandscapeFilter(videos, target);
 
   if (videos.length < MIN_POOL_BEFORE_GEMINI && !handles.length) {
     videos = await supplementWithApify(topic, undefined, videos, channelVideoIds);
-    videos = filterByTopicRelevance(topic, videos);
+    if (!unfiltered) {
+      videos = filterByTopicRelevance(topic, videos);
+    }
     videos = await applyLandscapeFilter(videos, target);
   }
 
+  if (unfiltered) {
+    return dedupeVideos(videos).slice(0, Math.max(target, videos.length));
+  }
   return dedupeSort(videos, topic).slice(0, target);
 }

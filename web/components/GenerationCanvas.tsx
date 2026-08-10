@@ -44,6 +44,9 @@ export type GeneratedVariant = {
   cameraFilterLabel?: string;
   compositionFactor?: string;
   compositionFactorLabel?: string;
+  /** Creative direction this variant belongs to */
+  directionId?: string;
+  directionName?: string;
 };
 
 type Props = {
@@ -186,6 +189,11 @@ export function GenerationCanvas({
           <div className="space-y-2 bg-[#f7f7f7] p-2.5">
             <p className="line-clamp-2 type-ui text-[#171618]">{title}</p>
             <div className="flex flex-wrap gap-1">
+              {v.directionName && (
+                <Badge variant="default" className="type-caption font-normal">
+                  {v.directionName}
+                </Badge>
+              )}
               {v.cameraFilterLabel && (
                 <Badge variant="outline" className="type-caption font-normal">
                   {v.cameraFilterLabel}
@@ -361,7 +369,7 @@ export function GenerationCanvas({
                       </p>
                     </div>
                     <div>
-                      <p className="type-caption text-[#5c5e60]">Hook</p>
+                      <p className="type-caption text-[#5c5e60]">Thumbnail text</p>
                       <p className="mt-1 type-ui text-[#171618] truncate">
                         {pipeline.hook || "None"}
                       </p>
@@ -539,8 +547,12 @@ export function GenerationCanvas({
             {generatedVariants.length > 0 ? (
               <div className="min-h-0 flex-1 space-y-3 overflow-y-auto scrollbar-none">
                 <p className="type-caption text-[#5c5e60]">
-                  {generatedVariants.length} of 4 combinations. Each uses a different camera look,
-                  type treatment, and framing rule
+                  {generatedVariants.length} thumbnail
+                  {generatedVariants.length === 1 ? "" : "s"}
+                  {generatedVariants.some((v) => v.directionName)
+                    ? " across directions"
+                    : ""}
+                  . Camera, type, and framing vary within each direction.
                 </p>
                 <div className="grid grid-cols-2 gap-3">
                   {generatedVariants.map((v, i) => (
@@ -553,8 +565,9 @@ export function GenerationCanvas({
                     </div>
                   ))}
                   {loading &&
-                    Array.from({ length: Math.max(0, 4 - generatedVariants.length) }).map(
-                      (_, i) => (
+                    Array.from({
+                      length: Math.max(0, 2 - (generatedVariants.length % 2 || 2)),
+                    }).map((_, i) => (
                         <div
                           key={`skel-${i}`}
                           className="overflow-hidden rounded-[20px] border border-[#efefef] bg-[#f7f7f7]"

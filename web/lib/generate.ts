@@ -20,15 +20,27 @@ const TIMEOUT_BY_SIZE: Record<"1K" | "2K" | "4K", number> = {
   "2K": 95_000,
   "4K": 110_000,
 };
-const MAX_REF_IMAGES = 3;
+/** Max images attached to a single Gemini generate call (media + research refs + seed). */
+const MAX_REF_IMAGES = 12;
 /** Only retry rate-limits / 5xx — never burn the budget retrying a hung call. */
 const MAX_RATE_RETRIES = 2;
-const BETWEEN_VARIANT_MS = 150;
 /**
- * Extra whole-batch passes used to fill missing variants. Gemini image 500s are
- * transient, so a slot that failed once usually lands on a later pass.
+ * Gemini rate limits (https://ai.google.dev/gemini-api/docs/rate-limits):
+ * RPM / TPM (input) / RPD per model+project; image models also constrain
+ * effective images/min. Parallel bursts of gemini-*-flash-image often return
+ * 500 INTERNAL or empty IMAGE_OTHER even when tier RPM looks fine — so the
+ * first pass is strictly sequential. Failed slots wait RETRY_COOLDOWN_MS then
+ * a second parallel fill; leftovers recover one-at-a-time with the same gap.
  */
-const MAX_FILL_ROUNDS = 3;
+const RETRY_COOLDOWN_MS = 3_000;
+/** Small gap between successful sequential slots (avoid request stacking). */
+const BETWEEN_SUCCESS_MS = 400;
+/** Immediate re-try of the same slot during pass 1 (after cooldown). */
+const PASS1_INLINE_RETRIES = 1;
+/** After sequential pass, one parallel fill of remaining slots. */
+const PARALLEL_FILL_ROUNDS = 1;
+/** Final one-at-a-time recoveries after the parallel fill. */
+const MAX_SEQUENTIAL_RECOVERIES = 3;
 /** Known-good image model used to fill slots when the selected model keeps 500ing. */
 const FALLBACK_IMAGE_MODEL = DEFAULT_GEMINI_MODEL;
 /** Default batch size for scratch generate. */
@@ -123,7 +135,7 @@ function assetInstruction(asset: ImageAsset): string {
     return `KEY SOURCE STILL — "${asset.label || "video still"}". Use this as a plate: pull the best person, object, OR background for a YouTube thumbnail. Crop/reframe freely; do not force a full-frame paste. Keep real likeness/product identity if that element is chosen. Do not swap in a different invented person/product.`;
   }
   if (asset.role === "reference") {
-    return `REFERENCE ONLY — "${asset.label || "ref"}". Study font energy, case, open tracking, color mood, and layout only. Paint only the user's exact hook from the main prompt; never copy wording from this reference. Never copy outline, stroke, border, frame, plate, neon, glow, or shadow treatments from the reference. Do not copy its subject over the user's media or reproduce it as a near-copy.`;
+    return `STYLE SAMPLE ONLY — "${asset.label || "ref"}". Borrow font energy, case, open tracking, color mood, and layout RHYTHM. FORBIDDEN: same subject pose, same crop, same background layout, same text block placement, or a near-identical remake. Paint only the user's exact hook from the main prompt; never copy wording, outline, stroke, border, frame, plate, neon, glow, or shadow from this image. Invent a clearly different original scene.`;
   }
   if (asset.role === "seed") {
     return `GENERATED VARIANT SEED — "${asset.label || "variant seed"}". This is a prior output the user liked. Generate a sibling in the same story direction — match palette energy, subject scale, hook placement, and venue. Vary camera look and type variant per prompt. Improve phone-readability; do not pixel-copy. The result must NOT be a 1:1 replica of this seed image — change composition, staging, or framing enough that it is a new, similar-but-distinct thumbnail. No border/frame around the canvas edges.`;
@@ -134,11 +146,18 @@ function assetInstruction(asset: ImageAsset): string {
   return `Attached asset "${asset.label || "asset"}" — use only if it improves the thumbnail story.`;
 }
 
+const ORIGINALITY_PREAMBLE =
+  "CRITICAL BEFORE ANY ATTACHED IMAGES: Competitor/liked thumbnails are STYLE SAMPLES only (fonts, color energy, layout rhythm). You MUST invent a NEW scene — different camera angle, different crop, different subject staging/pose, and different background arrangement than any attached reference. If the result could be mistaken for a reference thumb at a glance, it is a hard failure. Topic context and the user's brief outrank copying a reference.";
+
 function buildParts(
   prompt: string,
   assets: ImageAsset[]
 ): Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> {
   const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [];
+  const hasRefs = assets.some((a) => a.role === "reference" || a.role === "seed");
+  if (hasRefs) {
+    parts.push({ text: ORIGINALITY_PREAMBLE });
+  }
   for (const asset of assets.slice(0, MAX_REF_IMAGES)) {
     parts.push({ inlineData: { mimeType: asset.mimeType, data: asset.data } });
     parts.push({ text: assetInstruction(asset) });
@@ -156,7 +175,9 @@ function isTimeoutError(msg: string): boolean {
 }
 
 function isRateOrServerError(msg: string): boolean {
-  return /429|500|503|INTERNAL|UNAVAILABLE|Resource exhausted|rate/i.test(msg);
+  return /429|500|503|INTERNAL|UNAVAILABLE|Resource exhausted|rate|IMAGE_OTHER|no image/i.test(
+    msg
+  );
 }
 
 function timeoutForSize(imageSize: "1K" | "2K" | "4K"): number {
@@ -456,9 +477,13 @@ async function generateOneVariant(
 }
 
 /**
- * Generate every variant concurrently, then retry misses in one parallel pass.
- * Tier 2 allows 2k RPM / 4M TPM, so a 4-wide burst is well inside quota —
- * wall time is one image call, not four.
+ * Generate variants with a rate-limit-friendly schedule:
+ * 1) First pass — sequential (wait for each slot; inline 3s retry on fail)
+ * 2) Second pass — parallel fill of remaining slots after a 3s cooldown
+ * 3) Final sequential recoveries with 3s gaps
+ *
+ * See https://ai.google.dev/gemini-api/docs/rate-limits — image models are
+ * sensitive to concurrent generateContent bursts (500 / IMAGE_OTHER).
  */
 export async function generateThumbnailVariants(
   variants: VariantSpec[],
@@ -468,27 +493,32 @@ export async function generateThumbnailVariants(
     assets?: ImageAsset[];
     /** Target count — defaults to all variants */
     targetCount?: number;
-    /** Hard wall-clock budget for the whole batch (ms). Default 200s. */
+    /** Hard wall-clock budget for the whole batch (ms). Default 280s. */
     budgetMs?: number;
     /** When set, every variant runs the generate → verify → repair QA loop. */
     verify?: VerifyLoopOptions;
   }
 ): Promise<VariantImage[]> {
   const target = options.targetCount ?? variants.length;
-  const budgetMs = options.budgetMs ?? 200_000;
+  const budgetMs = options.budgetMs ?? 280_000;
   const started = Date.now();
   const succeeded = new Map<string, VariantImage>();
+  const selectedModel = options.model?.trim();
 
   function remaining(): number {
     return Math.max(0, budgetMs - (Date.now() - started));
   }
 
-  async function runOne(v: VariantSpec, modelOverride?: string, capMs?: number) {
-    if (succeeded.has(v.id)) return;
+  async function runOne(
+    v: VariantSpec,
+    modelOverride?: string,
+    capMs?: number
+  ): Promise<boolean> {
+    if (succeeded.has(v.id)) return true;
     const left = Math.min(remaining(), capMs ?? Infinity);
     if (left < 12_000) {
       console.warn(`Skipping ${v.id} — only ${left}ms budget left`);
-      return;
+      return false;
     }
     try {
       const img = await generateOneVariant(v, {
@@ -498,48 +528,96 @@ export async function generateThumbnailVariants(
       });
       succeeded.set(v.id, img);
       console.log(`Variant ${v.id} ok (${succeeded.size}/${target})`);
+      return true;
     } catch (err) {
       console.error(
         `Variant ${v.id} failed:`,
         err instanceof Error ? err.message : err
       );
+      return false;
     }
   }
 
   const pending = variants.slice(0, target);
 
-  // Reserve budget for fill rounds so one slow/flaky slot cannot eat the batch.
-  await Promise.all(pending.map((v) => runOne(v, undefined, budgetMs * 0.55)));
+  // ── Pass 1: sequential ──────────────────────────────────────────────
+  console.log(
+    `Variant batch: sequential pass for ${pending.length} slot(s) (budget ${Math.round(budgetMs / 1000)}s)`
+  );
+  for (let i = 0; i < pending.length; i++) {
+    const v = pending[i]!;
+    if (remaining() < 12_000) {
+      console.warn(`Stopping sequential pass — ${remaining()}ms left`);
+      break;
+    }
+    // Leave headroom for later slots + a parallel fill.
+    const slotsLeft = pending.length - i;
+    const perSlotCap = Math.max(
+      25_000,
+      Math.floor((remaining() * 0.85) / Math.max(1, slotsLeft))
+    );
+    let ok = await runOne(v, undefined, perSlotCap);
+    for (
+      let inline = 0;
+      !ok && inline < PASS1_INLINE_RETRIES && remaining() >= 20_000;
+      inline++
+    ) {
+      console.warn(
+        `Variant ${v.id}: waiting ${RETRY_COOLDOWN_MS}ms then retry ${inline + 1}/${PASS1_INLINE_RETRIES}`
+      );
+      await sleep(RETRY_COOLDOWN_MS);
+      ok = await runOne(
+        v,
+        selectedModel && selectedModel !== FALLBACK_IMAGE_MODEL
+          ? FALLBACK_IMAGE_MODEL
+          : undefined,
+        Math.min(remaining() - 5_000, 95_000)
+      );
+    }
+    if (ok && i < pending.length - 1 && remaining() > BETWEEN_SUCCESS_MS) {
+      await sleep(BETWEEN_SUCCESS_MS);
+    }
+  }
 
-  // Keep filling missing slots while budget allows. Gemini image 500s are
-  // transient, so a slot that failed once often succeeds on a later pass.
-  const selectedModel = options.model?.trim();
-  for (let round = 1; round <= MAX_FILL_ROUNDS; round++) {
+  // ── Pass 2: parallel fill of misses (after 3s cooldown) ─────────────
+  for (let round = 1; round <= PARALLEL_FILL_ROUNDS; round++) {
     const missing = pending.filter((v) => !succeeded.has(v.id));
     if (!missing.length) break;
-    if (remaining() < 20_000) {
+    if (remaining() < 25_000) {
       console.warn(
-        `Stopping fill rounds — ${remaining()}ms left, ${missing.length} variant(s) short`
+        `Skipping parallel fill — ${remaining()}ms left, ${missing.length} short`
       );
       break;
     }
-    // After the first retry pass, fall back to the known-good image model so a
-    // flaky selected model cannot cap the batch below the requested count.
-    const useFallback =
-      round >= 2 && Boolean(selectedModel) && selectedModel !== FALLBACK_IMAGE_MODEL;
     console.warn(
-      `Fill round ${round}: retrying ${missing.length} variant(s) in parallel${
-        useFallback ? ` on ${FALLBACK_IMAGE_MODEL}` : ""
-      }`
+      `Parallel fill ${round}: cooling ${RETRY_COOLDOWN_MS}ms then retrying ${missing.length} in parallel on ${FALLBACK_IMAGE_MODEL}`
     );
-    await sleep(BETWEEN_VARIANT_MS * round);
-    // Leave room for the next round unless this is the last one.
-    const roundCap =
-      round === MAX_FILL_ROUNDS ? remaining() : Math.max(25_000, remaining() * 0.6);
+    await sleep(RETRY_COOLDOWN_MS);
+    const roundCap = Math.max(25_000, Math.floor(remaining() * 0.7));
     await Promise.all(
-      missing.map((v) =>
-        runOne(v, useFallback ? FALLBACK_IMAGE_MODEL : undefined, roundCap)
-      )
+      missing.map((v) => runOne(v, FALLBACK_IMAGE_MODEL, roundCap))
+    );
+  }
+
+  // ── Pass 3: sequential recoveries with 3s gaps ──────────────────────
+  for (let i = 0; i < MAX_SEQUENTIAL_RECOVERIES; i++) {
+    const missing = pending.filter((v) => !succeeded.has(v.id));
+    if (!missing.length) break;
+    if (remaining() < 28_000) {
+      console.warn(
+        `Stopping sequential recovery — ${remaining()}ms left, ${missing.length} short`
+      );
+      break;
+    }
+    const next = missing[0]!;
+    console.warn(
+      `Sequential recovery ${i + 1}: waiting ${RETRY_COOLDOWN_MS}ms then ${next.id} (${missing.length} missing)`
+    );
+    await sleep(RETRY_COOLDOWN_MS);
+    await runOne(
+      next,
+      FALLBACK_IMAGE_MODEL,
+      Math.min(remaining() - 5_000, 95_000)
     );
   }
 

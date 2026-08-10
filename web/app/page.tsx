@@ -34,9 +34,20 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { HistoryMenu } from "@/components/HistoryMenu";
+import { DirectionsPanel } from "@/components/DirectionsPanel";
+import {
+  ResearchSortModal,
+  researchSortLabel,
+  type ResearchSortMode,
+} from "@/components/ResearchSortModal";
 import { ExportNavMenu } from "@/components/ExportNavMenu";
 import {
+  defaultDirections,
+  type CreativeDirection,
+} from "@/lib/creative-directions";
+import {
   ArrowRight,
+  ListFilter,
   LoaderCircle,
   RefreshCw,
   Sparkles,
@@ -136,6 +147,10 @@ export default function Home() {
   const [topic, setTopic] = useState("");
   const [channels, setChannels] = useState("");
   const [hook, setHook] = useState("");
+  const [projectName, setProjectName] = useState("");
+  const [directions, setDirections] = useState<CreativeDirection[]>(() =>
+    defaultDirections()
+  );
   const [composition, setComposition] = useState("auto");
   const [model, setModel] = useState("default");
   const [imageSize, setImageSize] = useState("1K");
@@ -147,6 +162,10 @@ export default function Home() {
   const [image, setImage] = useState<string | null>(null);
   const [backend, setBackend] = useState("");
   const [inspirations, setInspirations] = useState<InspirationVideo[]>([]);
+  /** Fetch / YouTube relevance order — Research filter re-sorts this into `inspirations`. */
+  const [researchPool, setResearchPool] = useState<InspirationVideo[]>([]);
+  const [researchSort, setResearchSort] = useState<ResearchSortMode>("views");
+  const [researchSortOpen, setResearchSortOpen] = useState(false);
   const [rejectedInspirations, setRejectedInspirations] = useState<RejectedInspirationVideo[]>([]);
   const [filterSummary, setFilterSummary] = useState("");
   const [topicContext, setTopicContext] = useState<TopicContext | null>(null);
@@ -157,7 +176,7 @@ export default function Home() {
   const [feedback, setFeedback] = useState<FeedbackMap>({});
   const [geminiStatus, setGeminiStatus] = useState("checking…");
   const [autoSelect, setAutoSelect] = useState(false);
-  /** Light Gemini filter: show top 8 as-is, drop only extremely off-title. */
+  /** Light = exact YouTube query unfiltered 50+; strict = expanded queries unfiltered 50+. */
   const [lightFilter, setLightFilter] = useState(true);
   const [studioTab, setStudioTab] = useState<StudioTab>("topic");
   const [canvasTab, setCanvasTab] = useState<"overview" | "preview" | "edit">("overview");
@@ -681,9 +700,9 @@ export default function Home() {
   }
 
   async function handleUploadMediaPhotos(files: File[]) {
-    const slots = Math.max(0, 4 - mediaPhotos.length);
+    const slots = Math.max(0, 12 - mediaPhotos.length);
     if (!slots) {
-      toast.error("Max 4 media photos");
+      toast.error("Max 12 media photos");
       return;
     }
     try {
@@ -699,7 +718,7 @@ export default function Home() {
           } satisfies PersistedMediaPhoto;
         })
       );
-      setMediaPhotos((previous) => [...previous, ...compressed].slice(0, 4));
+      setMediaPhotos((previous) => [...previous, ...compressed].slice(0, 12));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not read photo");
     }
@@ -853,6 +872,8 @@ export default function Home() {
         setChannelProfile(draft.channelProfile);
         setChannelProfileInput(draft.channelProfile.channelInput);
       }
+      if (draft.directions?.length) setDirections(draft.directions);
+      if (draft.projectName) setProjectName(draft.projectName);
     }
     if (handoff) {
       applySharePayload(handoff.payload);
@@ -913,6 +934,8 @@ export default function Home() {
       masterPromptCustomized,
       compositionFactors,
       useOpeningFrames,
+      directions,
+      projectName,
       mediaYoutubeUrl,
       mediaScript,
       mediaPhotos,
@@ -932,6 +955,8 @@ export default function Home() {
     masterPromptCustomized,
     compositionFactors,
     useOpeningFrames,
+    directions,
+    projectName,
     mediaYoutubeUrl,
     mediaScript,
     mediaPhotos,
@@ -988,6 +1013,7 @@ export default function Home() {
       id: sessionId,
       createdAt: Date.now(),
       updatedAt: Date.now(),
+      projectName: projectName.trim() || topic.trim() || "Untitled project",
       topic,
       channels,
       hook,
@@ -997,6 +1023,7 @@ export default function Home() {
       masterPrompt,
       masterPromptCustomized,
       compositionFactors,
+      directions,
       useOpeningFrames,
       image: imageSmall,
       backend,
@@ -1092,6 +1119,9 @@ export default function Home() {
       setChannelProfile(payload.channelProfile);
       setChannelProfileInput(payload.channelProfile.channelInput);
     }
+    if (payload.directions?.length) setDirections(payload.directions);
+    else setDirections(defaultDirections());
+    setProjectName(payload.projectName || payload.topic || "");
     if (payload.image) setCanvasTab("preview");
   }
 
@@ -1114,6 +1144,7 @@ export default function Home() {
   function loadFromSession(session: StudioSession) {
     setSessionId(session.id);
     setShareSlug(session.shareSlug || null);
+    setProjectName(session.projectName || session.topic || "");
     setTopic(session.topic);
     setChannels(session.channels);
     setHook(session.hook);
@@ -1148,7 +1179,10 @@ export default function Home() {
       setChannelProfile(session.channelProfile);
       setChannelProfileInput(session.channelProfile.channelInput);
     }
+    if (session.directions?.length) setDirections(session.directions);
+    else setDirections(defaultDirections());
     if (session.image) setCanvasTab("preview");
+    toast.success(`Opened project: ${session.projectName || session.topic || "Untitled"}`);
   }
 
   async function handleShareLink() {
@@ -1193,8 +1227,42 @@ export default function Home() {
       .catch(() => setGeminiStatus("offline"));
   }, []);
 
+  function applyResearchSort(
+    pool: InspirationVideo[],
+    mode: ResearchSortMode = researchSort
+  ): InspirationVideo[] {
+    if (mode === "views") {
+      return [...pool].sort((a, b) => {
+        const diff = (b.viewCount || 0) - (a.viewCount || 0);
+        if (diff !== 0) return diff;
+        return a.videoId.localeCompare(b.videoId);
+      });
+    }
+    // Relevance = preserve YouTube / fetch order
+    return [...pool];
+  }
+
+  function setResearchResults(
+    pool: InspirationVideo[],
+    mode: ResearchSortMode = researchSort
+  ) {
+    setResearchPool(pool);
+    setInspirations(applyResearchSort(pool, mode));
+  }
+
+  function handleResearchSortChange(mode: ResearchSortMode) {
+    setResearchSort(mode);
+    setInspirations(applyResearchSort(researchPool, mode));
+    toast.success(
+      mode === "views"
+        ? "Sorted by view count (high → low)"
+        : "Sorted by relevance (YouTube order)"
+    );
+  }
+
   function resetResearch() {
     setInspirations([]);
+    setResearchPool([]);
     setRejectedInspirations([]);
     setFilterSummary("");
     setSelectedIds(new Set());
@@ -1384,7 +1452,7 @@ export default function Home() {
             const results = (event.results as InspirationVideo[]) || [];
             if (!results.length) throw new Error("No thumbnails matched this title");
 
-            setInspirations(results);
+            setResearchResults(results);
             setRejectedInspirations((event.rejectedResults as RejectedInspirationVideo[]) || []);
             setFilterSummary(String(event.filterSummary || ""));
             setSelectedIds(
@@ -1399,8 +1467,8 @@ export default function Home() {
                   ? `YT query: "${String(event.youtubeQuery)}"`
                   : null,
                 event.source,
-                event.filterMode === "light" ? "YouTube order top 8" : null,
-                event.qualityRejected ? `${event.qualityRejected} rejected` : null,
+                `sort: ${researchSortLabel(researchSort)}`,
+                `${results.length} refs (no Gemini filter)`,
               ]
                 .filter(Boolean)
                 .join(" · ")
@@ -1414,9 +1482,7 @@ export default function Home() {
             setStudioTab("research");
             // Do not auto-fill hook from styleBrief.suggestedHook.
             toast.success(
-              lightFilter
-                ? `Top ${results.length} for "${String(event.youtubeQuery || topic)}" (YouTube order)`
-                : `Found ${results.length} title-matched thumbnails`
+              `Found ${results.length} thumbnails · sorted by ${researchSortLabel(researchSort).toLowerCase()}`
             );
           }
 
@@ -1721,9 +1787,11 @@ export default function Home() {
         return;
       }
 
-      setInspirations((prev) => {
+      setResearchPool((prev) => {
         const ids = new Set(prev.map((v) => v.videoId));
-        return [...prev, ...similar.filter((v) => !ids.has(v.videoId))];
+        const merged = [...prev, ...similar.filter((v) => !ids.has(v.videoId))];
+        setInspirations(applyResearchSort(merged));
+        return merged;
       });
       setSelectedIds((prev) => {
         const next = new Set(prev);
@@ -1784,17 +1852,27 @@ export default function Home() {
     editAssets?: EditorAsset[];
     baseImage?: string;
     seedVariant?: { image: string; label: string; note?: string };
+    direction?: CreativeDirection;
+    variantCount?: number;
+    hookOverride?: string;
+    userBriefOverride?: string;
   }) {
     const selected = inspirations.filter((item) => selectedIds.has(item.videoId));
     const isIteration = Boolean(opts?.iterationNote?.trim());
     const isSeedSimilar = Boolean(opts?.seedVariant?.image);
+    const effectiveHook =
+      opts?.hookOverride !== undefined ? opts.hookOverride : hook;
+    const effectiveBrief =
+      opts?.userBriefOverride !== undefined
+        ? opts.userBriefOverride
+        : mediaScript.trim();
 
     // Scratch mode: topic (+ optional hook) is enough. Refs / media / likes are optional.
 
     const brief = applyPaletteToBrief(styleBrief, selectedPalette) || styleBrief;
     // Never let a stale suggestedHook ride along when the form hook is empty.
     const briefForGenerate =
-      brief && !hook.trim()
+      brief && !effectiveHook.trim()
         ? { ...brief, suggestedHook: undefined }
         : brief;
 
@@ -1829,7 +1907,7 @@ export default function Home() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         topic: topic.trim(),
-        hook,
+        hook: effectiveHook,
         composition: composition === "auto" ? "" : composition,
         model: model === "default" ? "" : model,
         imageSize,
@@ -1847,7 +1925,11 @@ export default function Home() {
         compositionFactors,
         selectedPalette,
         paletteOptions: palettes,
-        variantCount: isIteration ? 1 : 4,
+        variantCount: isIteration
+          ? 1
+          : opts?.variantCount || opts?.direction?.variantCount || 4,
+        directionId: opts?.direction?.id,
+        directionName: opts?.direction?.name,
         inspirations: selected,
         feedback: buildFeedbackPayload(),
         titleSuggestions,
@@ -1855,7 +1937,7 @@ export default function Home() {
         mediaIntelligence: intelligenceForGeneration(mediaIntelligence),
         brandLanguage,
         channelProfile: channelProfile || undefined,
-        userBrief: mediaScript.trim() || undefined,
+        userBrief: effectiveBrief || undefined,
         userMediaPhotoCount: mediaPhotos.length || undefined,
         topicContext: topicContext || undefined,
         seedVariant: compressedSeed
@@ -1882,7 +1964,8 @@ export default function Home() {
               label: `Media photo: ${photo.name}`,
             })),
       }),
-      signal: AbortSignal.timeout(240_000),
+      // Sequential variant pass + 3s retries needs more wall time than parallel.
+      signal: AbortSignal.timeout(295_000),
     });
 
     let data: {
@@ -1900,6 +1983,8 @@ export default function Home() {
         cameraFilterLabel?: string;
         compositionFactor?: string;
         compositionFactorLabel?: string;
+        directionId?: string;
+        directionName?: string;
       }>;
       image?: string;
       backend?: string;
@@ -1937,60 +2022,138 @@ export default function Home() {
     setCanvasTab("preview");
     setGeneratedVariants([]);
 
-    try {
-      const data = await runGeneration();
-      const variants: GeneratedVariant[] = Array.isArray(data.images)
-        ? data.images.map((v) => ({
-              id: v.id,
-              image: `data:image/png;base64,${v.image}`,
-              label: v.label,
-              suggestedTitle: v.suggestedTitle || v.label,
-              paletteId: v.paletteId,
-              paletteName: v.paletteName,
-              composition: v.composition,
-              compositionLabel: v.compositionLabel,
-              cameraFilter: v.cameraFilter,
-              cameraFilterLabel: v.cameraFilterLabel,
-              compositionFactor: v.compositionFactor,
-              compositionFactorLabel: v.compositionFactorLabel,
-            })
-          )
-        : data.image
-          ? [
-              {
-                id: "v1",
-                image: `data:image/png;base64,${data.image}`,
-                label: "Primary",
-              },
-            ]
-          : [];
+    const dirs =
+      directions.length > 0 ? directions : defaultDirections();
+    const allVariants: GeneratedVariant[] = [];
+    let lastBackend = "";
+    let lastPipeline: PipelineOverview | undefined;
+    let requestedTotal = 0;
 
-      const img = variants[0]?.image || null;
-      setGeneratedVariants(variants);
+    const mapDirectionImages = (
+      dir: CreativeDirection,
+      data: Awaited<ReturnType<typeof runGeneration>>,
+      idPrefix: string
+    ): GeneratedVariant[] => {
+      if (Array.isArray(data.images) && data.images.length) {
+        return data.images.map((v, i) => ({
+          id: `${idPrefix}-${v.id || i + 1}`,
+          image: `data:image/png;base64,${v.image}`,
+          label: v.label,
+          suggestedTitle: v.suggestedTitle || v.label,
+          paletteId: v.paletteId,
+          paletteName: v.paletteName,
+          composition: v.composition,
+          compositionLabel: v.compositionLabel,
+          cameraFilter: v.cameraFilter,
+          cameraFilterLabel: v.cameraFilterLabel,
+          compositionFactor: v.compositionFactor,
+          compositionFactorLabel: v.compositionFactorLabel,
+          directionId: v.directionId || dir.id,
+          directionName: v.directionName || dir.name,
+        }));
+      }
+      if (data.image) {
+        return [
+          {
+            id: `${idPrefix}-v1`,
+            image: `data:image/png;base64,${data.image}`,
+            label: dir.name,
+            directionId: dir.id,
+            directionName: dir.name,
+          },
+        ];
+      }
+      return [];
+    };
+
+    try {
+      for (let di = 0; di < dirs.length; di++) {
+        const dir = dirs[di]!;
+        const dirHook = (dir.hook || "").trim() || hook;
+        const dirBrief = [dir.brief.trim(), mediaScript.trim()]
+          .filter(Boolean)
+          .join("\n\n");
+        const count = Math.min(4, Math.max(1, dir.variantCount || 2));
+        requestedTotal += count;
+
+        const data = await runGeneration({
+          direction: dir,
+          variantCount: count,
+          hookOverride: dirHook,
+          userBriefOverride: dirBrief || undefined,
+        });
+        lastBackend = data.backend || lastBackend;
+        if (data.pipeline) lastPipeline = data.pipeline;
+
+        const batch = mapDirectionImages(dir, data, dir.id);
+
+        // Gemini often drops 1 slot under load (e.g. 1/2). Top up once so
+        // 2 directions × 2 thumbs still lands at 4 when possible.
+        const shortfall = count - batch.length;
+        if (shortfall > 0) {
+          try {
+            toast.message(
+              `Filling ${shortfall} missing for ${dir.name || `Direction ${di + 1}`}… (3s cooldown)`
+            );
+            await new Promise((r) => setTimeout(r, 3_000));
+            const topUp = await runGeneration({
+              direction: dir,
+              variantCount: shortfall,
+              hookOverride: dirHook,
+              userBriefOverride: dirBrief || undefined,
+            });
+            lastBackend = topUp.backend || lastBackend;
+            if (topUp.pipeline) lastPipeline = topUp.pipeline;
+            batch.push(
+              ...mapDirectionImages(dir, topUp, `${dir.id}-fill${Date.now()}`)
+            );
+          } catch (topUpErr) {
+            console.warn(
+              `Top-up for ${dir.name} failed:`,
+              topUpErr instanceof Error ? topUpErr.message : topUpErr
+            );
+          }
+        }
+
+        allVariants.push(...batch);
+        setGeneratedVariants([...allVariants]);
+        if (batch[0]?.image) setImage(batch[0].image);
+      }
+
+      const img = allVariants[0]?.image || null;
+      setGeneratedVariants(allVariants);
       setImage(img);
-      setBackend(data.backend || "");
-      if (data.pipeline) setPipeline(data.pipeline);
+      setBackend(lastBackend);
+      if (lastPipeline) setPipeline(lastPipeline);
       if (img) {
-        setIterations([{ image: img, note: "", backend: data.backend || "", index: 1 }]);
+        setIterations([{ image: img, note: "", backend: lastBackend, index: 1 }]);
       }
       setIterationIndex(1);
       setIterationNote("");
       setAssets([]);
-      const stats = data.variantStats as { requested?: number; succeeded?: number } | undefined;
-      toast.success(
-        variants.length >= 4
-          ? `4 thumbnail combinations ready`
-          : variants.length > 1
-            ? `${variants.length} of ${stats?.requested || 4} combinations ready`
-            : variants.length === 1
-              ? "Only 1 variant succeeded. Try again with 1K"
-              : "Thumbnail generated"
-      );
+      if (allVariants.length < requestedTotal) {
+        toast.warning(
+          `${allVariants.length}/${requestedTotal} thumbnails ready — some slots failed, run Generate again for the rest`
+        );
+      } else if (allVariants.length > 1) {
+        toast.success(
+          `${allVariants.length} thumbnails across ${dirs.length} direction${dirs.length === 1 ? "" : "s"}`
+        );
+      } else if (allVariants.length === 1) {
+        toast.success("1 thumbnail ready");
+      } else {
+        toast.success("Thumbnail generated");
+      }
       void persistSession();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Generation failed";
       setError(msg);
-      toast.error(msg);
+      toast.error(
+        allVariants.length
+          ? `${msg} (${allVariants.length}/${requestedTotal} saved so far)`
+          : msg
+      );
+      if (allVariants.length) void persistSession();
     } finally {
       setLoading(false);
     }
@@ -2218,14 +2381,15 @@ export default function Home() {
                 deleteHistorySession(id);
                 setHistoryList(listHistory());
               }}
+              onHistoryChange={() => setHistoryList(listHistory())}
               onShare={handleShareLink}
               onShareSession={handleShareSavedSession}
               onSave={() =>
                 void persistSession().then((session) =>
                   toast.success(
                     session.shareSlug
-                      ? `Saved · /s/${session.shareSlug}`
-                      : "Session saved"
+                      ? `Project saved · /s/${session.shareSlug}`
+                      : "Project saved"
                   )
                 )
               }
@@ -2299,7 +2463,7 @@ export default function Home() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="hook-topic">
-                  Hook{" "}
+                  Thumbnail text{" "}
                   <span className="font-normal text-[var(--text-tertiary)]">
                     optional
                   </span>
@@ -2315,7 +2479,7 @@ export default function Home() {
                   id="hook-topic-hint"
                   className="type-caption text-[var(--text-tertiary)]"
                 >
-                  Text burned onto the thumbnail. Leave blank for none.
+                  Text burned onto the thumbnail. Leave blank for none. Override per direction on Generate.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-3">
@@ -2346,7 +2510,7 @@ export default function Home() {
                     htmlFor="lightFilter"
                     className="cursor-pointer font-normal text-[var(--text-secondary-chromatic)]"
                   >
-                    Light Gemini filter (top 8)
+                    Exact YouTube query
                   </Label>
                 </div>
                 <Button
@@ -2362,69 +2526,9 @@ export default function Home() {
               </div>
               <p className="type-caption text-[var(--text-tertiary)]">
                 {lightFilter
-                  ? "Sends your title as-is to YouTube and shows the top 8 in YouTube's order. Gemini drops wrong visual context using topic understanding."
-                  : "Strict mode: expands queries and keeps only strong title matches."}
+                  ? "Fetches 50+ YouTube results (no Gemini cull). Use Filters on Research to sort by Relevance or Views."
+                  : "Expands queries for a bigger unfiltered pool. Use Filters on Research to sort by Relevance or Views."}
               </p>
-            </section>
-
-            <section className="space-y-3 border-t border-[#efefef] pt-5">
-              <div className="space-y-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="type-ui text-[#171618]">Media</h3>
-                  <Badge
-                    variant="outline"
-                    className="border-[#c8c9cb] font-normal type-caption text-[#5c5e60]"
-                  >
-                    Optional
-                  </Badge>
-                </div>
-                <p className="type-caption leading-snug text-[#5c5e60]">
-                  Person, product, backdrop, YouTube URL, or key frames — skip if you only have a title.
-                </p>
-              </div>
-              <MediaIntelligencePanel
-                youtubeUrl={mediaYoutubeUrl}
-                onYoutubeUrlChange={setMediaYoutubeUrl}
-                script={mediaScript}
-                onScriptChange={setMediaScript}
-                photos={mediaPhotos}
-                onUploadPhotos={(files) => void handleUploadMediaPhotos(files)}
-                onRemovePhoto={(id) =>
-                  setMediaPhotos((previous) =>
-                    previous.filter((photo) => photo.id !== id)
-                  )
-                }
-                openingFramesSlot={
-                  <OpeningFramesPanel
-                    useOpeningFrames={useOpeningFrames}
-                    onUseOpeningFramesChange={setUseOpeningFrames}
-                    openingFrames={openingFrames}
-                    onUpload={(file) => void streamOpeningFrame(file)}
-                    onYoutubeUrl={(url) => ingestYoutubeUrl(url)}
-                    onRemove={(id) => {
-                      videoFilesRef.current.delete(id);
-                      setOpeningFrames((previous) =>
-                        previous.filter((clip) => clip.id !== id)
-                      );
-                    }}
-                    onSelectFrame={selectOpeningFrame}
-                    inputId="opening-video-upload-research"
-                  />
-                }
-                analyzing={analyzingMedia}
-                analysisProgress={mediaAnalysisProgress}
-                result={mediaIntelligence}
-                selectedHook={hook}
-                onSelectHook={setHook}
-                onAnalyze={() => void handleAnalyzeMedia()}
-                canAnalyze={Boolean(
-                  topic.trim() ||
-                    mediaYoutubeUrl.trim() ||
-                    mediaScript.trim() ||
-                    mediaPhotos.length ||
-                    readyOpeningFrames.length
-                )}
-              />
             </section>
           </div>
         }
@@ -2434,18 +2538,34 @@ export default function Home() {
               rejectedInspirations.length > 0 ||
               searching) && (
               <div className="space-y-4">
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="type-caption text-[var(--text-tertiary)]">
-                    {inspirations.length} kept
+                    {inspirations.length} refs
                     {rejectedInspirations.length
                       ? `, ${rejectedInspirations.length} dropped`
                       : ""}
-                    {searchSource ? `, ${searchSource}` : ""}
+                    {` · ${researchSortLabel(researchSort)}`}
                     {exploreLabel && !exploring ? `, similar to “${exploreLabel}”` : ""}
                   </p>
-                  <Badge variant="secondary" className="tabular-nums">
-                    {selectedIds.size} selected
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 gap-1.5"
+                      disabled={!researchPool.length && !inspirations.length}
+                      onClick={() => setResearchSortOpen(true)}
+                    >
+                      <ListFilter className="size-3.5" />
+                      Filters
+                      <span className="rounded-full bg-[#f0f0f0] px-1.5 type-caption text-[#5c5e60]">
+                        {researchSortLabel(researchSort)}
+                      </span>
+                    </Button>
+                    <Badge variant="secondary" className="tabular-nums">
+                      {selectedIds.size} selected
+                    </Badge>
+                  </div>
                 </div>
                 {inspirations.length > 0 ? (
                 <InspirationGrid
@@ -2523,6 +2643,66 @@ export default function Home() {
         }
         stylePanel={
           <div className="space-y-4">
+            <section className="space-y-3">
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="type-ui text-[#171618]">Media</h3>
+                  <Badge
+                    variant="outline"
+                    className="border-[#c8c9cb] font-normal type-caption text-[#5c5e60]"
+                  >
+                    Optional
+                  </Badge>
+                </div>
+                <p className="type-caption leading-snug text-[#5c5e60]">
+                  Person, product, backdrop, YouTube URL, or key frames — up to 12 reference photos.
+                </p>
+              </div>
+              <MediaIntelligencePanel
+                youtubeUrl={mediaYoutubeUrl}
+                onYoutubeUrlChange={setMediaYoutubeUrl}
+                script={mediaScript}
+                onScriptChange={setMediaScript}
+                photos={mediaPhotos}
+                onUploadPhotos={(files) => void handleUploadMediaPhotos(files)}
+                onRemovePhoto={(id) =>
+                  setMediaPhotos((previous) =>
+                    previous.filter((photo) => photo.id !== id)
+                  )
+                }
+                openingFramesSlot={
+                  <OpeningFramesPanel
+                    useOpeningFrames={useOpeningFrames}
+                    onUseOpeningFramesChange={setUseOpeningFrames}
+                    openingFrames={openingFrames}
+                    onUpload={(file) => void streamOpeningFrame(file)}
+                    onYoutubeUrl={(url) => ingestYoutubeUrl(url)}
+                    onRemove={(id) => {
+                      videoFilesRef.current.delete(id);
+                      setOpeningFrames((previous) =>
+                        previous.filter((clip) => clip.id !== id)
+                      );
+                    }}
+                    onSelectFrame={selectOpeningFrame}
+                    inputId="opening-video-upload-style"
+                  />
+                }
+                analyzing={analyzingMedia}
+                analysisProgress={mediaAnalysisProgress}
+                result={mediaIntelligence}
+                selectedHook={hook}
+                onSelectHook={setHook}
+                onAnalyze={() => void handleAnalyzeMedia()}
+                canAnalyze={Boolean(
+                  topic.trim() ||
+                    mediaYoutubeUrl.trim() ||
+                    mediaScript.trim() ||
+                    mediaPhotos.length ||
+                    readyOpeningFrames.length
+                )}
+              />
+            </section>
+
             <ChannelProfilePanel
               channelInput={channelProfileInput}
               topic={topic}
@@ -2671,7 +2851,7 @@ export default function Home() {
                   </dl>
                 ) : (
                   <p className="type-caption text-[#5c5e60]">
-                    Add research, media, or a hook to strengthen context before generating.
+                    Add research, media, or thumbnail text to strengthen context before generating.
                   </p>
                 )}
               </section>
@@ -2682,10 +2862,19 @@ export default function Home() {
                 className="grid gap-3 sm:grid-cols-2"
               >
                 <div className="space-y-1.5 sm:col-span-2">
+                  <Label htmlFor="project-name">Project name</Label>
+                  <Input
+                    id="project-name"
+                    placeholder={topic.trim() || "Untitled project"}
+                    value={projectName}
+                    onChange={(e) => setProjectName(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
                   <Label htmlFor="hook">
-                    Hook{" "}
+                    Thumbnail text{" "}
                     <span className="font-normal text-[var(--text-tertiary)]">
-                      optional
+                      optional global default
                     </span>
                   </Label>
                   <Input
@@ -2695,6 +2884,11 @@ export default function Home() {
                     onChange={(e) => setHook(e.target.value)}
                   />
                 </div>
+                <DirectionsPanel
+                  directions={directions}
+                  onChange={setDirections}
+                  globalHook={hook}
+                />
                 <div className="min-w-0 space-y-1.5">
                   <Label>Composition</Label>
                   <Select value={composition} onValueChange={(v) => v && setComposition(v)}>
@@ -2793,6 +2987,13 @@ export default function Home() {
             paletteName={selectedPalette?.name}
           />
         }
+      />
+
+      <ResearchSortModal
+        open={researchSortOpen}
+        onOpenChange={setResearchSortOpen}
+        value={researchSort}
+        onChange={handleResearchSortChange}
       />
 
       <FeedbackDialog

@@ -74,7 +74,7 @@ const TABS: Array<{
     icon: Type,
     countKey: "photos",
     description:
-      "Name the video, add optional media, then research refs when you want them. Generate works from a title alone.",
+      "Name the video and optional thumbnail text, then research refs when you want them. Generate works from a title alone.",
   },
   {
     value: "research",
@@ -83,21 +83,23 @@ const TABS: Array<{
     countKey: "refs",
     optional: true,
     description:
-      "Optional reference thumbs. Like what you want — palettes suggest automatically in the background once you head to Generate.",
+      "50+ reference thumbs, unfiltered. Use Filters to sort by Relevance or Views. Like what you want — palettes suggest when you head to Generate.",
   },
   {
     value: "style",
     label: "Style",
     icon: LayoutTemplate,
     optional: true,
-    description: "Channel voice, brand language, quality direction, and composition.",
+    description:
+      "Media (up to 12 refs), channel voice, brand language, palette, quality direction, and composition.",
   },
   {
     value: "generate",
     label: "Generate",
     icon: Sparkles,
     countKey: "variants",
-    description: "Set hook, layout, model, and palette, then create variants.",
+    description:
+      "Set directions with separate briefs, thumbnail text, layout, model, and palette — then create thumbnails.",
   },
 ];
 

@@ -351,24 +351,27 @@ export function buildUltraPrompt(
   const disliked = options.feedback?.filter((f) => f.rating === "dislike") || [];
 
   if (liked.length) {
-    const likedRefs = liked
-      .map((f) => {
-        const note = f.comment ? ` (user note: ${f.comment})` : "";
-        return `"${f.title}" by ${f.channel}${note}`;
-      })
-      .join("; ");
+    const likedLines = liked.map((f, i) => {
+      const why = (f.comment || "").trim();
+      return why
+        ? `${i + 1}. "${f.title}" by ${f.channel} — why liked: ${why.slice(0, 140)}`
+        : `${i + 1}. "${f.title}" by ${f.channel}`;
+    });
+    lines.push(
+      `Liked references (${liked.length}) — study each attached sample + note; custom media photos take priority over these:`,
+      ...likedLines
+    );
     if (options.primaryVideoFrame) {
       lines.push(
-        `Liked references (palette + typography + layout hints only — do NOT override primary video frame): ${likedRefs}`
+        "Liked refs = palette + typography + layout energy only — do NOT override primary video frame; never clone their crop/pose."
       );
     } else if (hook) {
       lines.push(
-        `STRONGLY match patterns from user-liked references — especially hook FONTS (weight, case), layout, and any topic-relevant action/pose/emotional energy: ${likedRefs}`,
-        `Match the font energy closely while painting only the exact hook "${hook}". Do not copy reference words, pseudo-text, neon/glow, outline/stroke, border, plate, or shadow treatment. The final image must not be a 1:1 replica of any single liked reference.`
+        `Borrow FONT ENERGY (weight, case, open tracking), palette mood, and layout rhythm from liked samples. Invent a NEW scene for topic + hook "${hook}". Remaking any liked thumb (same pose/crop/background/text placement) = FAIL.`
       );
     } else {
       lines.push(
-        `Liked references (palette + layout + any topic-relevant action/pose/emotional energy — NO on-image text): ${likedRefs}`
+        "Liked refs = palette + layout rhythm + topic-relevant energy only — NO on-image text, NO cloned pose/crop."
       );
     }
   }
@@ -390,11 +393,12 @@ export function buildUltraPrompt(
       .join("; ");
     if (options.primaryVideoFrame) {
       lines.push(
-        `Research thumbnails (palette/typography/layout reference only — read their hook fonts): ${refs}`
+        `Research titles (text-only DNA — palette/type hints; never recreate these thumbs): ${refs}`
       );
     } else {
       lines.push(
-        `Additional references (layout/palette/fonts plus any topic-relevant action/pose/emotional energy — adapt, never copy unrelated subjects): ${refs}`
+        `Research titles (inspiration DNA only — invent original staging; never recreate these competitors' crops, poses, or backgrounds): ${refs}`,
+        "COPYCAT BAN: If the output could be mistaken for one of the research/liked thumbs at a glance, it fails. Change camera angle, subject staging, and environment enough to read as a new original."
       );
     }
   } else if (

@@ -100,13 +100,19 @@ export function buildGenerationContextBlock(input: GenerationContextInput): stri
   const liked = input.feedback?.filter((f) => f.rating === "like") || [];
   if (liked.length) {
     lines.push(
-      `LIKED REFS (${liked.length}): match their layout energy, type weight, palette, and any topic-relevant action/pose/emotional energy — not their unrelated subjects.`
+      `LIKED REFS (${liked.length}) — each attached as a pixel style sample when budget allows (custom media/frames take priority slots). Borrow layout rhythm, type weight, palette mood, and topic-relevant energy; invent a NEW scene — never remake pose/crop/background.`,
+      ...liked.map((f, i) => {
+        const why = (f.comment || "").trim();
+        return why
+          ? `  ${i + 1}. "${f.title}" (${f.channel}) — how/why liked: ${why.slice(0, 160)}`
+          : `  ${i + 1}. "${f.title}" (${f.channel}) — liked look (no note; study attached sample for fonts/palette/layout energy only)`;
+      })
     );
   }
 
   if (input.selectedRefCount && input.selectedRefCount > 0) {
     lines.push(
-      `${input.selectedRefCount} research thumbnail(s) selected — study attached reference images for font energy, open tracking, composition, and any action/pose/emotional energy that is relevant to this topic. Do not copy unrelated subjects or force an action when none fits. Paint only the user's exact hook; never copy reference wording. Never reproduce a reference 1:1 or carry over its outline, stroke, border, frame, plate, glow, or shadow treatment.`
+      `SELECTED (optional DNA): ${input.selectedRefCount} research thumb(s) checked — titles/style hints only, NOT required pixel attaches. Select = shortlist for the batch; Like = “use this look” (pixels). Custom Style/media photos outrank research likes for attach slots. Do not clone selected competitors.`
     );
   }
 
@@ -118,7 +124,7 @@ export function buildGenerationContextBlock(input: GenerationContextInput): stri
 
   if (input.userMediaPhotoCount && input.userMediaPhotoCount > 0) {
     lines.push(
-      `${input.userMediaPhotoCount} user photo(s) attached — choose one ingredient (face, product, or plate).`
+      `CUSTOM MEDIA (${input.userMediaPhotoCount} photo(s)) — user-supplied refs from Style/media; treat as primary ingredients (face, product, or plate) ahead of research likes.`
     );
   }
 
@@ -143,11 +149,11 @@ export function buildGenerationContextBlock(input: GenerationContextInput): stri
 
   lines.push(
     "SETTING RULE: Thumbnail environment must match topic context and media evidence. Never substitute a wrong venue (e.g. outdoor track for indoor HYROX, factory sodium glow for cleanroom).",
-    "ORIGINALITY RULE: References/seed are style + font guidance only. The output must never be an exact or near-1:1 replica of any single reference or seed thumbnail — always vary composition/staging/framing enough to be a new, similar-but-distinct image.",
+    "ORIGINALITY RULE: References/seed are style + font guidance only — not templates. NEVER produce an exact or near-1:1 replica (same pose + crop + background + text placement). Change camera angle, subject staging, AND environment enough that it cannot be mistaken for any reference at a glance.",
     "NO BORDER/FRAME RULE: The image must fill the entire 16:9 canvas edge-to-edge — no colored border, picture-frame outline, vignette ring, rounded-card bezel, or decorative stroke/scribble line anywhere near the canvas edges, even if a reference or seed has one.",
     hook
       ? `GEMINI TYPOGRAPHY RULE: Paint the exact hook "${hook}" character-for-character exactly once. Use a named medium-bold sans target with 0.06–0.10em open tracking, solid flat fill, dynamic negative-space placement, ≥5% safe margins, and no backdrop, outline, stroke, drop shadow, neon, or glow.`
-      : "NO-TEXT RULE: The Hook field is empty; render no on-image letters, captions, logos, labels, watermarks, or pseudo-text."
+      : "NO-TEXT RULE: The Thumbnail text field is empty; render no on-image letters, captions, logos, labels, watermarks, or pseudo-text."
   );
 
   return lines.filter(Boolean).join("\n");
@@ -168,9 +174,9 @@ export function buildGenerationContextSummary(
     items.push({ label: "Subject", value: input.mediaIntelligence.primarySubject });
   }
   if (hook) {
-    items.push({ label: "Hook", value: hook.toUpperCase() });
+    items.push({ label: "Thumbnail text", value: hook.toUpperCase() });
   } else {
-    items.push({ label: "Text", value: "None (image-only)" });
+    items.push({ label: "Thumbnail text", value: "None (image-only)" });
   }
   if (input.selectedPalette?.name) {
     items.push({

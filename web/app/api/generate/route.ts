@@ -24,9 +24,12 @@ import { compressAssetsForApi, compressBase64Server } from "@/lib/image-compress
 import type { GenerationMediaIntelligence } from "@/lib/video-intelligence-types";
 import type { BrandLanguage } from "@/lib/brand-language";
 import type { ChannelProfile } from "@/lib/channel-profile";
-import type { TopicContext } from "@/lib/gemini-filter";
+import { resolveTopicContext, type TopicContext } from "@/lib/gemini-filter";
 
 import { runtimeEnv } from "@/lib/runtime-env";
+
+/** Shared attach budget: custom media + opening frames + seed + all liked refs. */
+const MAX_ATTACHED = 12;
 
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
@@ -104,8 +107,10 @@ export async function POST(req: NextRequest) {
     const userBrief = body.userBrief ? String(body.userBrief).trim() : "";
     const userMediaPhotoCount = Math.max(
       0,
-      Math.min(8, Number(body.userMediaPhotoCount) || 0)
+      Math.min(12, Number(body.userMediaPhotoCount) || 0)
     );
+    const directionId = body.directionId ? String(body.directionId) : undefined;
+    const directionName = body.directionName ? String(body.directionName) : undefined;
     const topicContext = body.topicContext as TopicContext | undefined;
     const seedVariant = body.seedVariant as
       | { image?: string; label?: string; note?: string }
@@ -138,7 +143,25 @@ export async function POST(req: NextRequest) {
     });
 
     const likedVideos = sortedInspirations.filter((v) => likedIds.has(v.videoId));
-    const refPool = likedVideos.length ? likedVideos : sortedInspirations;
+    // Visual attach = LIKED only. Selected-but-not-liked stay text-only so
+    // Gemini cannot pixel-clone competitor thumbs the user merely checked.
+    const visualRefPool = likedVideos;
+
+    // Research used to skip topicContext; gather it here if the client has none.
+    let effectiveTopicContext = topicContext;
+    if (!effectiveTopicContext?.whatItIs?.trim()) {
+      const apiKey = runtimeEnv("GEMINI_API_KEY") || runtimeEnv("GOOGLE_API_KEY");
+      if (apiKey) {
+        try {
+          effectiveTopicContext = await resolveTopicContext(apiKey, topic, hook);
+          console.log(
+            `[generate] resolved topicContext setting=${JSON.stringify(effectiveTopicContext.setting)}`
+          );
+        } catch (err) {
+          console.warn("[generate] topicContext resolve failed:", err);
+        }
+      }
+    }
 
     const briefWithPalette = applyPaletteToBrief(styleBrief, selectedPalette);
     // If the user cleared the form hook, strip any stale suggestedHook before prompting.
@@ -190,7 +213,7 @@ export async function POST(req: NextRequest) {
         channelProfile,
         userBrief: userBrief || undefined,
         userMediaPhotoCount: userMediaPhotoCount || undefined,
-        topicContext,
+        topicContext: effectiveTopicContext,
         selectedPalette,
         selectedRefCount: selectedIds.size,
       });
@@ -224,10 +247,6 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Attach liked thumbnail images as visual references (compressed — big refs timeout Gemini)
-    const likedRaw = await likedThumbsAsAssets(refPool.slice(0, 3));
-    const likedAssets = await compressAssetsForApi(likedRaw);
-
     // Pre-extracted opening frames (streamed + ffmpeg'd at upload time)
     const openingAssets =
       useOpeningFrames && openingFrames.length
@@ -235,6 +254,7 @@ export async function POST(req: NextRequest) {
         : [];
     const hasPrimaryVideoFrame = openingAssets.length > 0;
 
+    // Custom media photos / Style-tab refs (client `assets`) — priority over research likes.
     const compressedEditAssets = assets.length ? await compressAssetsForApi(assets) : [];
 
     let seedAssets: Array<{
@@ -258,17 +278,42 @@ export async function POST(req: NextRequest) {
       ];
     }
 
-    // User-supplied media has priority; seed variant next; liked thumbs fill remaining slots.
-    const refSlots = Math.max(
-      0,
-      3 - openingAssets.length - compressedEditAssets.length - seedAssets.length
+    // Liked research thumbs: attach as many as the user liked, filling slots left
+    // after custom media / opening frames / seed (no hard "max 3 likes" cap).
+    const reserved =
+      openingAssets.length + compressedEditAssets.length + seedAssets.length;
+    const likedSlots = Math.max(0, MAX_ATTACHED - reserved);
+    const likeComments = new Map(
+      feedback.filter((f) => f.rating === "like").map((f) => [f.videoId, f.comment || ""])
     );
-    const likedRefs = likedAssets
-      .slice(0, refSlots)
-      .map((a) => ({ ...a, role: "reference" as const }));
+    const likedRaw =
+      likedSlots > 0
+        ? await likedThumbsAsAssets(visualRefPool, {
+            max: likedSlots,
+            commentsByVideoId: likeComments,
+          })
+        : [];
+    const likedAssets = await compressAssetsForApi(likedRaw);
+    if (!visualRefPool.length && sortedInspirations.length) {
+      console.log(
+        `[generate] ${sortedInspirations.length} selected ref(s) — text-only (optional DNA; like to attach pixels)`
+      );
+    } else if (visualRefPool.length > likedAssets.length) {
+      console.warn(
+        `[generate] attached ${likedAssets.length}/${visualRefPool.length} liked refs — ${reserved} slots used by custom media/frames/seed (budget ${MAX_ATTACHED})`
+      );
+    }
+
+    const likedRefs = likedAssets.map((a) => ({
+      ...a,
+      role: "reference" as const,
+    }));
     const sharedAssets = hasPrimaryVideoFrame
-      ? [...openingAssets, ...compressedEditAssets, ...seedAssets, ...likedRefs].slice(0, 3)
-      : [...compressedEditAssets, ...seedAssets, ...likedRefs].slice(0, 3);
+      ? [...openingAssets, ...compressedEditAssets, ...seedAssets, ...likedRefs].slice(
+          0,
+          MAX_ATTACHED
+        )
+      : [...compressedEditAssets, ...seedAssets, ...likedRefs].slice(0, MAX_ATTACHED);
 
     const factorPool =
       compositionFactors.length > 0 ? compositionFactors : DEFAULT_FACTOR_IDS;
@@ -341,7 +386,7 @@ export async function POST(req: NextRequest) {
         channelProfile,
         userBrief: userBrief || undefined,
         userMediaPhotoCount: userMediaPhotoCount || undefined,
-        topicContext,
+        topicContext: effectiveTopicContext,
         selectedPalette: palette,
         selectedRefCount: selectedIds.size,
         seedVariantNote: seedVariant?.note,
@@ -368,9 +413,9 @@ export async function POST(req: NextRequest) {
       imageSize,
       assets: sharedAssets,
       targetCount: variantCount,
-      // Parallel 1K batch needs wall-clock room for 3 variants + titles.
-      // 4×1K parallel needs headroom under maxDuration 300s + client 240s.
-      budgetMs: imageSize === "1K" ? 200_000 : imageSize === "2K" ? 220_000 : 260_000,
+      // Sequential first pass is slower than parallel bursts but far more
+      // reliable under Gemini image RPM/TPM pressure (maxDuration 300s).
+      budgetMs: imageSize === "1K" ? 280_000 : imageSize === "2K" ? 285_000 : 290_000,
       // LLM-ops QA loop: every variant is OCR'd + typography-scored by a
       // vision model; failures regenerate once with a targeted repair note.
       verify: {
@@ -434,16 +479,21 @@ export async function POST(req: NextRequest) {
     const enriched = images.map((img) => {
       const spec = variantSpecs.find((v) => v.id === img.id);
       const suggestedTitle = titleMap[img.id] || `${topic} — ${spec?.compositionFactorLabel || "Variant"}`;
+      const labeled = directionName
+        ? `${directionName}: ${suggestedTitle}`
+        : suggestedTitle;
       return {
         ...img,
-        suggestedTitle,
+        suggestedTitle: labeled,
         cameraFilter: spec?.cameraFilter,
         cameraFilterLabel: spec?.cameraFilterLabel,
         compositionFactor: spec?.compositionFactor,
         compositionFactorLabel: spec?.compositionFactorLabel,
         compositionLabel: spec?.compositionLabel,
         paletteName: spec?.paletteName,
-        label: suggestedTitle,
+        label: labeled,
+        directionId,
+        directionName,
       };
     });
 
