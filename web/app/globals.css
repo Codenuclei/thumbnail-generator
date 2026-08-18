@@ -369,6 +369,59 @@
     height: 0;
   }
 
+  /* Compact popovers: thin track, transparent thumb (visible only on hover). */
+  [data-slot="select-content"] {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+  [data-slot="select-content"]:hover {
+    scrollbar-color: rgb(23 22 24 / 0.2) transparent;
+  }
+  [data-slot="select-content"]::-webkit-scrollbar {
+    width: 6px;
+  }
+  [data-slot="select-content"]::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  [data-slot="select-content"]::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 999px;
+  }
+  [data-slot="select-content"]:hover::-webkit-scrollbar-thumb {
+    background: rgb(23 22 24 / 0.2);
+  }
+
+  /* Hue / range sliders: see-through thumb so the track color shows through. */
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    margin-top: -4px;
+    border-radius: 999px;
+    background: transparent;
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 1px rgb(0 0 0 / 0.35);
+    cursor: pointer;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    background: transparent;
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 1px rgb(0 0 0 / 0.35);
+    cursor: pointer;
+  }
+  input[type="range"]::-webkit-slider-runnable-track {
+    height: 6px;
+    border-radius: 999px;
+  }
+
   /* Staggered grid entrance. Consumer sets --stagger-index per child.
      60ms sits mid-range in the 30-80ms window. */
   .stagger-item {

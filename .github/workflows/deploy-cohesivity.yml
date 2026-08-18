@@ -74,6 +74,7 @@ jobs:
       - name: Write optional app env for Railway upsert
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           APIFY_API_TOKEN: ${{ secrets.APIFY_API_TOKEN }}
           CANVA_CLIENT_ID: ${{ secrets.CANVA_CLIENT_ID }}
           CANVA_CLIENT_SECRET: ${{ secrets.CANVA_CLIENT_SECRET }}
@@ -86,6 +87,7 @@ jobs:
           : > .env
           for key in \
             GEMINI_API_KEY \
+            OPENROUTER_API_KEY \
             APIFY_API_TOKEN \
             CANVA_CLIENT_ID \
             CANVA_CLIENT_SECRET \

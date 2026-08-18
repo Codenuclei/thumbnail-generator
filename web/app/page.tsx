@@ -37,7 +37,9 @@ import { HistoryMenu } from "@/components/HistoryMenu";
 import { DirectionsPanel } from "@/components/DirectionsPanel";
 import {
   ResearchSortModal,
+  parseViewBound,
   researchSortLabel,
+  viewRangeInvalid,
   type ResearchSortMode,
 } from "@/components/ResearchSortModal";
 import { ExportNavMenu } from "@/components/ExportNavMenu";
@@ -45,6 +47,12 @@ import {
   defaultDirections,
   type CreativeDirection,
 } from "@/lib/creative-directions";
+import {
+  IMAGE_MODELS,
+  imageModelLabel,
+  resolveImageModelId,
+  type ImageModelOption,
+} from "@/lib/image-models";
 import {
   ArrowRight,
   ListFilter,
@@ -122,13 +130,6 @@ const COMPOSITIONS = [
   { value: "data", label: "Data overlay" },
 ];
 
-const MODELS = [
-  { value: "default", label: "Gemini 2.5 Flash Image (default)" },
-  { value: "gemini-3.1-flash-image", label: "Gemini 3.1 Flash Image" },
-  { value: "gemini-3.1-flash-lite-image", label: "Gemini 3.1 Flash Lite" },
-  { value: "gemini-3-pro-image", label: "Gemini 3 Pro Image" },
-];
-
 const IMAGE_SIZES = [
   { value: "1K", label: "1K Fast (recommended)" },
   { value: "2K", label: "2K" },
@@ -153,6 +154,7 @@ export default function Home() {
   );
   const [composition, setComposition] = useState("auto");
   const [model, setModel] = useState("default");
+  const [imageModels, setImageModels] = useState<ImageModelOption[]>(IMAGE_MODELS);
   const [imageSize, setImageSize] = useState("1K");
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
@@ -166,6 +168,8 @@ export default function Home() {
   const [researchPool, setResearchPool] = useState<InspirationVideo[]>([]);
   const [researchSort, setResearchSort] = useState<ResearchSortMode>("views");
   const [researchSortOpen, setResearchSortOpen] = useState(false);
+  const [minViews, setMinViews] = useState("");
+  const [maxViews, setMaxViews] = useState("");
   const [rejectedInspirations, setRejectedInspirations] = useState<RejectedInspirationVideo[]>([]);
   const [filterSummary, setFilterSummary] = useState("");
   const [topicContext, setTopicContext] = useState<TopicContext | null>(null);
@@ -1220,6 +1224,12 @@ export default function Home() {
     fetch("/api/health")
       .then((r) => r.json())
       .then((d) => {
+        if (d.openrouter?.configured) {
+          setGeminiStatus(
+            d.gemini?.textOk ? "OpenRouter + Gemini" : "OpenRouter"
+          );
+          return;
+        }
         if (!d.gemini?.configured) setGeminiStatus("key missing");
         else if (d.gemini.textOk) setGeminiStatus("connected");
         else setGeminiStatus("key error");
@@ -1227,19 +1237,46 @@ export default function Home() {
       .catch(() => setGeminiStatus("offline"));
   }, []);
 
+  useEffect(() => {
+    fetch("/api/image-models")
+      .then((r) => r.json())
+      .then((d: { models?: ImageModelOption[] }) => {
+        if (Array.isArray(d.models) && d.models.length) {
+          setImageModels(d.models);
+        }
+      })
+      .catch(() => {
+        /* keep curated IMAGE_MODELS fallback */
+      });
+  }, []);
+
   function applyResearchSort(
     pool: InspirationVideo[],
-    mode: ResearchSortMode = researchSort
+    mode: ResearchSortMode = researchSort,
+    minRaw: string = minViews,
+    maxRaw: string = maxViews
   ): InspirationVideo[] {
+    const min = parseViewBound(minRaw);
+    const max = parseViewBound(maxRaw);
+    const ranged =
+      !viewRangeInvalid(minRaw, maxRaw) && (min != null || max != null)
+        ? pool.filter((item) => {
+            const views = item.viewCount || 0;
+            if (min != null && views < min) return false;
+            if (max != null && views > max) return false;
+            return true;
+          })
+        : pool;
+
     if (mode === "views") {
-      return [...pool].sort((a, b) => {
+      return [...ranged].sort((a, b) => {
         const diff = (b.viewCount || 0) - (a.viewCount || 0);
         if (diff !== 0) return diff;
         return a.videoId.localeCompare(b.videoId);
       });
     }
     // Relevance = preserve YouTube / fetch order
-    return [...pool];
+    return [...ranged];
   }
 
   function setResearchResults(
@@ -1258,6 +1295,13 @@ export default function Home() {
         ? "Sorted by view count (high → low)"
         : "Sorted by relevance (YouTube order)"
     );
+  }
+
+  function handleViewRangeChange(nextMin: string, nextMax: string) {
+    setMinViews(nextMin);
+    setMaxViews(nextMax);
+    if (viewRangeInvalid(nextMin, nextMax)) return;
+    setInspirations(applyResearchSort(researchPool, researchSort, nextMin, nextMax));
   }
 
   function resetResearch() {
@@ -1468,7 +1512,7 @@ export default function Home() {
                   : null,
                 event.source,
                 `sort: ${researchSortLabel(researchSort)}`,
-                `${results.length} refs (no Gemini filter)`,
+                `${results.length} refs (content-gated)`,
               ]
                 .filter(Boolean)
                 .join(" · ")
@@ -1856,6 +1900,8 @@ export default function Home() {
     variantCount?: number;
     hookOverride?: string;
     userBriefOverride?: string;
+    /** OpenRouter / image model override for this request. */
+    modelOverride?: string;
   }) {
     const selected = inspirations.filter((item) => selectedIds.has(item.videoId));
     const isIteration = Boolean(opts?.iterationNote?.trim());
@@ -1909,7 +1955,11 @@ export default function Home() {
         topic: topic.trim(),
         hook: effectiveHook,
         composition: composition === "auto" ? "" : composition,
-        model: model === "default" ? "" : model,
+        model: resolveImageModelId(
+          opts?.modelOverride?.trim() ||
+            opts?.direction?.model?.trim() ||
+            (model === "default" ? "" : model)
+        ),
         imageSize,
         styleBrief: briefForGenerate,
         masterPrompt,
@@ -2397,26 +2447,43 @@ export default function Home() {
           </>
         }
         generateAction={
-          <ShimmerButton
-            type="submit"
-            form="generate-form"
-            disabled={loading || !topic.trim()}
-            borderRadius="8px"
-            background="rgba(0, 0, 0, 1)"
-            className="h-9 gap-1.5 px-4 text-sm font-medium disabled:opacity-50"
-          >
-            {loading ? (
-              <>
-                <LoaderCircle className="size-3.5 animate-spin" />
-                Generating…
-              </>
-            ) : (
-              <>
-                <Sparkles className="size-3.5" />
-                Generate variants
-              </>
-            )}
-          </ShimmerButton>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Select value={model} onValueChange={(v) => v && setModel(v)}>
+              <SelectTrigger
+                className="h-9 w-[min(100%,220px)] bg-white"
+                aria-label="Image generate model"
+              >
+                <SelectValue placeholder="Model" />
+              </SelectTrigger>
+              <SelectContent>
+                {imageModels.map((m) => (
+                  <SelectItem key={m.value} value={m.value}>
+                    {m.shortLabel || m.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <ShimmerButton
+              type="submit"
+              form="generate-form"
+              disabled={loading || !topic.trim()}
+              borderRadius="8px"
+              background="rgba(0, 0, 0, 1)"
+              className="h-9 gap-1.5 px-4 text-sm font-medium disabled:opacity-50"
+            >
+              {loading ? (
+                <>
+                  <LoaderCircle className="size-3.5 animate-spin" />
+                  Generating…
+                </>
+              ) : (
+                <>
+                  <Sparkles className="size-3.5" />
+                  Generate variants
+                </>
+              )}
+            </ShimmerButton>
+          </div>
         }
         briefAction={
           <div className="flex items-center gap-2">
@@ -2541,6 +2608,10 @@ export default function Home() {
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="type-caption text-[var(--text-tertiary)]">
                     {inspirations.length} refs
+                    {!viewRangeInvalid(minViews, maxViews) &&
+                    (parseViewBound(minViews) != null || parseViewBound(maxViews) != null)
+                      ? ` of ${researchPool.length}`
+                      : ""}
                     {rejectedInspirations.length
                       ? `, ${rejectedInspirations.length} dropped`
                       : ""}
@@ -2620,9 +2691,24 @@ export default function Home() {
 
             {!inspirations.length && !rejectedInspirations.length && !searching && (
               <div className="space-y-4">
-                <p className="type-caption leading-snug text-[var(--text-tertiary)]">
-                  No refs yet. Research a topic, or skip to Generate.
-                </p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="type-caption leading-snug text-[var(--text-tertiary)]">
+                    No refs yet. Research a topic, or skip to Generate.
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 gap-1.5"
+                    onClick={() => setResearchSortOpen(true)}
+                  >
+                    <ListFilter className="size-3.5" />
+                    Filters
+                    <span className="rounded-full bg-[#f0f0f0] px-1.5 type-caption text-[#5c5e60]">
+                      {researchSortLabel(researchSort)}
+                    </span>
+                  </Button>
+                </div>
                 <div className="flex flex-wrap gap-2">
                   <Button
                     variant="outline"
@@ -2888,6 +2974,8 @@ export default function Home() {
                   directions={directions}
                   onChange={setDirections}
                   globalHook={hook}
+                  globalModel={model}
+                  modelOptions={imageModels}
                 />
                 <div className="min-w-0 space-y-1.5">
                   <Label>Composition</Label>
@@ -2920,13 +3008,18 @@ export default function Home() {
                   </Select>
                 </div>
                 <div className="min-w-0 space-y-1.5 sm:col-span-2">
-                  <Label>Model</Label>
+                  <Label>
+                    Image model{" "}
+                    <span className="font-normal text-[var(--text-tertiary)]">
+                      OpenRouter · {imageModelLabel(model, imageModels)}
+                    </span>
+                  </Label>
                   <Select value={model} onValueChange={(v) => v && setModel(v)}>
                     <SelectTrigger className="w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {MODELS.map((m) => (
+                      {imageModels.map((m) => (
                         <SelectItem key={m.value} value={m.value}>
                           {m.label}
                         </SelectItem>
@@ -2994,6 +3087,9 @@ export default function Home() {
         onOpenChange={setResearchSortOpen}
         value={researchSort}
         onChange={handleResearchSortChange}
+        minViews={minViews}
+        maxViews={maxViews}
+        onRangeChange={handleViewRangeChange}
       />
 
       <FeedbackDialog

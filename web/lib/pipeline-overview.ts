@@ -67,7 +67,7 @@ export function buildPipelineOverview(input: {
     hook: input.hook,
     composition: input.composition || "Auto",
     imageSize: input.imageSize,
-    model: input.model || "gemini-2.5-flash-image",
+    model: input.model || "google/gemini-2.5-flash-image",
     references,
     liked,
     disliked,

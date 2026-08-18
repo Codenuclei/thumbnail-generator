@@ -24,7 +24,7 @@ import { compressAssetsForApi, compressBase64Server } from "@/lib/image-compress
 import type { GenerationMediaIntelligence } from "@/lib/video-intelligence-types";
 import type { BrandLanguage } from "@/lib/brand-language";
 import type { ChannelProfile } from "@/lib/channel-profile";
-import { resolveTopicContext, type TopicContext } from "@/lib/gemini-filter";
+import { resolveTopicContext, gateGeneratedImages, type TopicContext } from "@/lib/gemini-filter";
 
 import { runtimeEnv } from "@/lib/runtime-env";
 
@@ -123,11 +123,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Topic is required" }, { status: 400 });
     }
 
-    if (!runtimeEnv("GEMINI_API_KEY") && !runtimeEnv("GOOGLE_API_KEY")) {
+    if (
+      !runtimeEnv("OPENROUTER_API_KEY") &&
+      !runtimeEnv("GEMINI_API_KEY") &&
+      !runtimeEnv("GOOGLE_API_KEY")
+    ) {
       return NextResponse.json(
         {
           error:
-            "GEMINI_API_KEY is not available on the server. Generation cannot run — check Railway env.",
+            "OPENROUTER_API_KEY (preferred) or GEMINI_API_KEY is not available on the server. Generation cannot run — check env.",
         },
         { status: 503 }
       );
@@ -430,6 +434,31 @@ export async function POST(req: NextRequest) {
       throw new Error("All thumbnail variants failed — try 1K or default model");
     }
 
+    // NSFW display gate on generated outputs (skip relevance — topic is user-chosen).
+    const genGate = await gateGeneratedImages(
+      images.map((img) => ({
+        id: img.id,
+        mimeType: "image/png",
+        dataBase64: img.image,
+      })),
+      { topic, hook: hook || undefined }
+    );
+    const gatedImages = images.filter((img) => genGate.allowedIds.includes(img.id));
+    if (genGate.rejected.length) {
+      console.warn(
+        `[generate] NSFW gate dropped ${genGate.rejected.length}/${images.length} variant(s)`,
+        genGate.rejected.map((r) => `${r.id}:${r.codes.join(",")}`).join(" ")
+      );
+    }
+    if (!gatedImages.length) {
+      throw new Error(
+        genGate.adultQuery
+          ? "Generated thumbnails failed the content gate"
+          : "Generated thumbnails looked NSFW and were blocked for this non-adult topic — try a different brief"
+      );
+    }
+    const safeImages = gatedImages;
+
     // AI titles — prefer explicit likedTitles, then feedback likes, then research suggestions
     const likedTitles = [
       ...explicitLikedTitles,
@@ -441,7 +470,7 @@ export async function POST(req: NextRequest) {
       .map((f) => f.title);
 
     const titleFallback = Object.fromEntries(
-      images.map((img, i) => {
+      safeImages.map((img, i) => {
         const spec = variantSpecs.find((v) => v.id === img.id);
         return [
           img.id,
@@ -459,7 +488,7 @@ export async function POST(req: NextRequest) {
           likedTitles,
           dislikedTitles,
           variants: variantSpecs
-            .filter((v) => images.some((img) => img.id === v.id))
+            .filter((v) => safeImages.some((img) => img.id === v.id))
             .map((v) => ({
               id: v.id,
               cameraFilter: v.cameraFilterLabel || "",
@@ -476,7 +505,7 @@ export async function POST(req: NextRequest) {
       titleMap = titleFallback;
     }
 
-    const enriched = images.map((img) => {
+    const enriched = safeImages.map((img) => {
       const spec = variantSpecs.find((v) => v.id === img.id);
       const suggestedTitle = titleMap[img.id] || `${topic} — ${spec?.compositionFactorLabel || "Variant"}`;
       const labeled = directionName

@@ -24,6 +24,7 @@ Repo **Settings → Secrets and variables → Actions → New repository secret*
 ### Optional (written to `.env` if present; upserted to Railway when set)
 
 - `GEMINI_API_KEY`
+- `OPENROUTER_API_KEY`
 - `APIFY_API_TOKEN`
 - `CANVA_CLIENT_ID`
 - `CANVA_CLIENT_SECRET`

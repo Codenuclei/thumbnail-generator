@@ -16,17 +16,36 @@ import {
   createDirection,
   type CreativeDirection,
 } from "@/lib/creative-directions";
+import {
+  DIRECTION_MODEL_GLOBAL,
+  IMAGE_MODELS,
+  imageModelLabel,
+  type ImageModelOption,
+} from "@/lib/image-models";
 
 type Props = {
   directions: CreativeDirection[];
   onChange: (next: CreativeDirection[]) => void;
   globalHook: string;
+  /** Global Generate-stage model (for “Use global” label). */
+  globalModel?: string;
+  /** Live OpenRouter catalog; falls back to IMAGE_MODELS. */
+  modelOptions?: ImageModelOption[];
 };
 
-export function DirectionsPanel({ directions, onChange, globalHook }: Props) {
+export function DirectionsPanel({
+  directions,
+  onChange,
+  globalHook,
+  globalModel = "default",
+  modelOptions = IMAGE_MODELS,
+}: Props) {
   function update(id: string, patch: Partial<CreativeDirection>) {
     onChange(directions.map((d) => (d.id === id ? { ...d, ...patch } : d)));
   }
+
+  const catalog = modelOptions.length ? modelOptions : IMAGE_MODELS;
+  const globalLabel = imageModelLabel(globalModel, catalog);
 
   return (
     <section className="space-y-3 rounded-[20px] border border-[#efefef] bg-[#f7f7f7] p-4 sm:col-span-2">
@@ -34,7 +53,7 @@ export function DirectionsPanel({ directions, onChange, globalHook }: Props) {
         <div>
           <p className="type-ui text-[#171618]">Directions</p>
           <p className="mt-0.5 type-caption text-[#5c5e60]">
-            Separate briefs and thumbnail text per version. Generate creates thumbs for each.
+            Separate briefs, model, and thumbnail text per version. Generate creates thumbs for each.
           </p>
         </div>
         <Button
@@ -119,6 +138,36 @@ export function DirectionsPanel({ directions, onChange, globalHook }: Props) {
                     : "Leave blank to use global thumbnail text"
                 }
               />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="type-caption text-[#5c5e60]">
+                Image model{" "}
+                <span className="font-normal text-[var(--text-tertiary)]">
+                  optional override
+                </span>
+              </Label>
+              <Select
+                value={dir.model?.trim() ? dir.model : DIRECTION_MODEL_GLOBAL}
+                onValueChange={(v) =>
+                  update(dir.id, {
+                    model: !v || v === DIRECTION_MODEL_GLOBAL ? "" : v,
+                  })
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={DIRECTION_MODEL_GLOBAL}>
+                    Use global · {globalLabel}
+                  </SelectItem>
+                  {catalog.filter((m) => m.value !== "default").map((m) => (
+                    <SelectItem key={m.value} value={m.value}>
+                      {m.shortLabel || m.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
         ))}

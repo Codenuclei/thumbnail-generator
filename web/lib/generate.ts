@@ -8,8 +8,18 @@ import {
   POST_RENDER_TYPOGRAPHY_ENABLED,
   type PlacementZoneId,
 } from "@/lib/font-engine";
+import {
+  DEFAULT_IMAGE_MODEL,
+  FALLBACK_IMAGE_MODEL,
+  resolveImageModelId,
+} from "@/lib/image-models";
+import {
+  generateOpenRouterImage,
+  openRouterConfigured,
+} from "@/lib/openrouter-generate";
 
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+/** Direct-Gemini fallback id (bare). Prefer OpenRouter + DEFAULT_IMAGE_MODEL. */
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-image";
 /**
  * Per-call patience. Keep under route budget for multi-variant 1K batches.
@@ -41,8 +51,6 @@ const PASS1_INLINE_RETRIES = 1;
 const PARALLEL_FILL_ROUNDS = 1;
 /** Final one-at-a-time recoveries after the parallel fill. */
 const MAX_SEQUENTIAL_RECOVERIES = 3;
-/** Known-good image model used to fill slots when the selected model keeps 500ing. */
-const FALLBACK_IMAGE_MODEL = DEFAULT_GEMINI_MODEL;
 /** Default batch size for scratch generate. */
 export const DEFAULT_VARIANT_COUNT = 4;
 
@@ -180,6 +188,12 @@ function isRateOrServerError(msg: string): boolean {
   );
 }
 
+function isPermanentGenerateError(msg: string): boolean {
+  return /No endpoints found that support the requested output modalities|cannot be used with the chat\/completions endpoint|Use the \/api\/v1\/images/i.test(
+    msg
+  );
+}
+
 function timeoutForSize(imageSize: "1K" | "2K" | "4K"): number {
   return TIMEOUT_BY_SIZE[imageSize] || TIMEOUT_BY_SIZE["1K"];
 }
@@ -276,23 +290,72 @@ export async function generateThumbnail(
 ): Promise<GenerateResult> {
   const geminiKey = runtimeEnv("GEMINI_API_KEY") || runtimeEnv("GOOGLE_API_KEY");
   const cohesivityKey = runtimeEnv("COH_APPLICATION_KEY");
-  const geminiModel = model || DEFAULT_GEMINI_MODEL;
+  const resolvedModel = resolveImageModelId(model);
+  // OpenRouter prefers provider/model slugs; direct Gemini wants bare ids.
+  const geminiBareModel = resolvedModel.startsWith("google/")
+    ? resolvedModel.slice("google/".length)
+    : resolvedModel.includes("/")
+      ? DEFAULT_GEMINI_MODEL
+      : resolvedModel;
 
-  if (!geminiKey) {
+  if (!openRouterConfigured() && !geminiKey) {
     throw new Error(
-      "GEMINI_API_KEY missing on server — thumbnail generation cannot run."
+      "OPENROUTER_API_KEY or GEMINI_API_KEY missing on server — thumbnail generation cannot run."
     );
   }
 
   try {
-    let buf = await generateGemini(
-      geminiKey,
-      prompt,
-      geminiModel,
-      imageSize,
-      assets,
-      budgetMs
-    );
+    let buf: Buffer;
+    let backend: string;
+
+    if (openRouterConfigured()) {
+      const callTimeout = Math.min(
+        timeoutForSize(imageSize),
+        budgetMs && budgetMs > 5_000 ? budgetMs - 2_000 : timeoutForSize(imageSize)
+      );
+      let lastErr: Error | null = null;
+      let orResult: { buffer: Buffer; backend: string } | null = null;
+      for (let attempt = 1; attempt <= MAX_RATE_RETRIES + 1; attempt++) {
+        try {
+          orResult = await generateOpenRouterImage({
+            prompt,
+            model: resolvedModel || DEFAULT_IMAGE_MODEL,
+            imageSize,
+            assets,
+            timeoutMs: callTimeout,
+          });
+          lastErr = null;
+          break;
+        } catch (err) {
+          lastErr = err instanceof Error ? err : new Error(String(err));
+          const msg = lastErr.message;
+          const retry =
+            attempt <= MAX_RATE_RETRIES &&
+            isRateOrServerError(msg) &&
+            !isTimeoutError(msg);
+          console.error(`OpenRouter attempt ${attempt} failed:`, msg);
+          if (!retry) break;
+          const backoff = 1000 * 2 ** (attempt - 1);
+          await sleep(backoff + Math.floor(Math.random() * 500));
+        }
+      }
+      if (!orResult) {
+        throw lastErr || new Error("OpenRouter failed");
+      }
+      buf = orResult.buffer;
+      backend = orResult.backend;
+    } else {
+      buf = await generateGemini(
+        geminiKey!,
+        prompt,
+        geminiBareModel || DEFAULT_GEMINI_MODEL,
+        imageSize,
+        assets,
+        budgetMs
+      );
+      backend = `gemini:${geminiBareModel || DEFAULT_GEMINI_MODEL}@${imageSize}`;
+    }
+
     if (POST_RENDER_TYPOGRAPHY_ENABLED && composite?.hook.trim()) {
       try {
         // Preserved rollback path for future experiments. This feature is off
@@ -317,19 +380,19 @@ export async function generateThumbnail(
     }
     return {
       imageBase64: buf.toString("base64"),
-      backend: `gemini:${geminiModel}@${imageSize}`,
+      backend,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error("Gemini failed:", msg);
+    console.error("Image generate failed:", msg);
     if (!allowFallback || !cohesivityKey) {
       throw new Error(
         isTimeoutError(msg)
-          ? `Gemini timed out — use 1K, fewer refs, or default model. ${msg}`
+          ? `Generate timed out — use 1K, fewer refs, or default model. ${msg}`
           : msg
       );
     }
-    throw new Error(`Gemini failed and fallback disabled. ${msg}`);
+    throw new Error(`Generate failed and fallback disabled. ${msg}`);
   }
 }
 
@@ -503,7 +566,16 @@ export async function generateThumbnailVariants(
   const budgetMs = options.budgetMs ?? 280_000;
   const started = Date.now();
   const succeeded = new Map<string, VariantImage>();
+  const lastFail = new Map<string, string>();
   const selectedModel = options.model?.trim();
+  // Don't silently swap a non-Gemini pick (FLUX / GPT Image / Recraft…) onto Gemini.
+  const selectedResolved = selectedModel
+    ? resolveImageModelId(selectedModel)
+    : "";
+  const retryModel =
+    selectedResolved && !selectedResolved.startsWith("google/gemini")
+      ? selectedResolved
+      : FALLBACK_IMAGE_MODEL;
 
   function remaining(): number {
     return Math.max(0, budgetMs - (Date.now() - started));
@@ -530,10 +602,9 @@ export async function generateThumbnailVariants(
       console.log(`Variant ${v.id} ok (${succeeded.size}/${target})`);
       return true;
     } catch (err) {
-      console.error(
-        `Variant ${v.id} failed:`,
-        err instanceof Error ? err.message : err
-      );
+      const msg = err instanceof Error ? err.message : String(err);
+      lastFail.set(v.id, msg);
+      console.error(`Variant ${v.id} failed:`, msg);
       return false;
     }
   }
@@ -559,7 +630,10 @@ export async function generateThumbnailVariants(
     let ok = await runOne(v, undefined, perSlotCap);
     for (
       let inline = 0;
-      !ok && inline < PASS1_INLINE_RETRIES && remaining() >= 20_000;
+      !ok &&
+      inline < PASS1_INLINE_RETRIES &&
+      remaining() >= 20_000 &&
+      !isPermanentGenerateError(lastFail.get(v.id) || "");
       inline++
     ) {
       console.warn(
@@ -568,8 +642,8 @@ export async function generateThumbnailVariants(
       await sleep(RETRY_COOLDOWN_MS);
       ok = await runOne(
         v,
-        selectedModel && selectedModel !== FALLBACK_IMAGE_MODEL
-          ? FALLBACK_IMAGE_MODEL
+        selectedResolved && selectedResolved !== retryModel
+          ? retryModel
           : undefined,
         Math.min(remaining() - 5_000, 95_000)
       );
@@ -581,7 +655,11 @@ export async function generateThumbnailVariants(
 
   // ── Pass 2: parallel fill of misses (after 3s cooldown) ─────────────
   for (let round = 1; round <= PARALLEL_FILL_ROUNDS; round++) {
-    const missing = pending.filter((v) => !succeeded.has(v.id));
+    const missing = pending.filter(
+      (v) =>
+        !succeeded.has(v.id) &&
+        !isPermanentGenerateError(lastFail.get(v.id) || "")
+    );
     if (!missing.length) break;
     if (remaining() < 25_000) {
       console.warn(
@@ -590,18 +668,22 @@ export async function generateThumbnailVariants(
       break;
     }
     console.warn(
-      `Parallel fill ${round}: cooling ${RETRY_COOLDOWN_MS}ms then retrying ${missing.length} in parallel on ${FALLBACK_IMAGE_MODEL}`
+      `Parallel fill ${round}: cooling ${RETRY_COOLDOWN_MS}ms then retrying ${missing.length} in parallel on ${retryModel}`
     );
     await sleep(RETRY_COOLDOWN_MS);
     const roundCap = Math.max(25_000, Math.floor(remaining() * 0.7));
     await Promise.all(
-      missing.map((v) => runOne(v, FALLBACK_IMAGE_MODEL, roundCap))
+      missing.map((v) => runOne(v, retryModel, roundCap))
     );
   }
 
   // ── Pass 3: sequential recoveries with 3s gaps ──────────────────────
   for (let i = 0; i < MAX_SEQUENTIAL_RECOVERIES; i++) {
-    const missing = pending.filter((v) => !succeeded.has(v.id));
+    const missing = pending.filter(
+      (v) =>
+        !succeeded.has(v.id) &&
+        !isPermanentGenerateError(lastFail.get(v.id) || "")
+    );
     if (!missing.length) break;
     if (remaining() < 28_000) {
       console.warn(
@@ -616,7 +698,7 @@ export async function generateThumbnailVariants(
     await sleep(RETRY_COOLDOWN_MS);
     await runOne(
       next,
-      FALLBACK_IMAGE_MODEL,
+      retryModel,
       Math.min(remaining() - 5_000, 95_000)
     );
   }

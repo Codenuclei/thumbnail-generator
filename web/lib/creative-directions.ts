@@ -8,6 +8,11 @@ export type CreativeDirection = {
   hook?: string;
   /** How many variants to generate for this direction (1–4). */
   variantCount: number;
+  /**
+   * Optional OpenRouter image model override.
+   * Empty / omitted → use the Generate-stage global model picker.
+   */
+  model?: string;
 };
 
 export function createDirection(
@@ -20,6 +25,7 @@ export function createDirection(
     brief: seed?.brief || "",
     hook: seed?.hook || "",
     variantCount: Math.min(4, Math.max(1, seed?.variantCount ?? 2)),
+    model: seed?.model || "",
   };
 }
 

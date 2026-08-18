@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { youtubeYtdlpReady } from "@/lib/youtube-download";
 import { runtimeEnv } from "@/lib/runtime-env";
+import { DEFAULT_IMAGE_MODEL } from "@/lib/image-models";
+import { openRouterConfigured } from "@/lib/openrouter-generate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -42,8 +44,14 @@ export async function GET() {
       gemini: {
         configured: Boolean(geminiKey),
         textOk: geminiText,
-        imageModel: "gemini-2.5-flash-image",
+        imageModel: DEFAULT_IMAGE_MODEL,
         error: geminiError || undefined,
+      },
+      openrouter: {
+        configured: openRouterConfigured(),
+        baseUrl:
+          runtimeEnv("OPENROUTER_BASE_URL") || "https://openrouter.ai/api/v1",
+        defaultImageModel: DEFAULT_IMAGE_MODEL,
       },
       cohesivity: { configured: Boolean(cohesivityKey) },
       ytdlp,
@@ -51,7 +59,9 @@ export async function GET() {
       exports: {
         canva: Boolean(cohesivityKey),
         figma: Boolean(cohesivityKey),
-        canvaOAuth: Boolean(runtimeEnv("CANVA_CLIENT_ID") && runtimeEnv("CANVA_CLIENT_SECRET")),
+        canvaOAuth: Boolean(
+          runtimeEnv("CANVA_CLIENT_ID") && runtimeEnv("CANVA_CLIENT_SECRET")
+        ),
         figmaOAuth: Boolean(
           (runtimeEnv("FIGMA_CLIENT_ID") && runtimeEnv("FIGMA_CLIENT_SECRET")) ||
             runtimeEnv("FIGMA_ACCESS_TOKEN")

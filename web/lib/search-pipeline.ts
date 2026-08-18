@@ -7,7 +7,9 @@ import type { ScrapedVideo } from "@/lib/apify-youtube";
 import {
   LIGHT_FILTER_POOL,
   LIGHT_FILTER_RESULTS,
+  gateThumbnailContent,
   resolveTopicContext,
+  type ContentGateSummary,
   type GeminiFilterMode,
   type RejectedVideo,
   type TopicContext,
@@ -120,6 +122,7 @@ export type SearchProgressEvent =
       qualityRejected: number;
       channelStats: { kept: number; droppedOffTopic: number };
       topicContext?: TopicContext;
+      contentGate?: ContentGateSummary;
       source: string;
       queries: string[];
       youtubeQuery: string;
@@ -127,12 +130,69 @@ export type SearchProgressEvent =
     }
   | { type: "error"; message: string };
 
+/**
+ * Run display safety gate, then emit gated candidates (never show ungated thumbs).
+ */
+async function gatePoolForDisplay(
+  pool: ScrapedVideo[],
+  options: {
+    title: string;
+    hook?: string;
+    topicContext?: TopicContext;
+    emit: (e: SearchProgressEvent) => void;
+  }
+): Promise<{
+  results: ScrapedVideo[];
+  rejectedResults: RejectedVideo[];
+  contentGate: ContentGateSummary;
+  filterSummary: string;
+}> {
+  options.emit({
+    type: "status",
+    step: "filter",
+    message: "Checking thumbnails for safety & relevance…",
+  });
+
+  const contentGate = await gateThumbnailContent(pool, {
+    topic: options.title,
+    hook: options.hook,
+    topicContext: options.topicContext,
+  });
+
+  const results = contentGate.allowed;
+  const rejectedResults = contentGate.rejected;
+
+  // Progressive UI: only gated thumbs ever reach InspirationGrid.
+  if (results.length) {
+    options.emit({
+      type: "candidates",
+      count: results.length,
+      videos: results.slice(0, Math.min(24, results.length)),
+    });
+  }
+
+  const filterSummary = [
+    `Showing ${results.length} YouTube results after content gate`,
+    contentGate.adultQuery ? "adult query — NSFW allowed when on-topic" : "NSFW blocked",
+    contentGate.nsfwDropped ? `${contentGate.nsfwDropped} NSFW hidden` : null,
+    contentGate.irrelevantDropped
+      ? `${contentGate.irrelevantDropped} irrelevant dropped`
+      : null,
+    options.topicContext ? `Context: ${options.topicContext.setting}` : null,
+    "Sort by views in Research filters",
+  ]
+    .filter(Boolean)
+    .join(". ");
+
+  return { results, rejectedResults, contentGate, filterSummary };
+}
+
 export async function runSearchPipeline(
   title: string,
   options?: {
     channels?: string;
     hook?: string;
-    /** light = exact YouTube search, unfiltered 50+; strict = expanded queries still unfiltered 50+ */
+    /** light = exact YouTube search + content gate; strict = expanded queries + content gate */
     filterMode?: GeminiFilterMode;
     onProgress?: (e: SearchProgressEvent) => void;
   }
@@ -149,11 +209,11 @@ export async function runSearchPipeline(
   let youtubeQuery = userQuery;
 
   if (filterMode === "light") {
-    // Exact user text → YouTube India/Relevance order. No Gemini cull — show 50+ like youtube.com.
+    // Exact user text → YouTube India/Relevance order, then content gate before display.
     emit({
       type: "status",
       step: "search",
-      message: `YouTube India · Relevance (50+ unfiltered): "${userQuery}"`,
+      message: `YouTube India · Relevance (50+): "${userQuery}"`,
     });
     console.log(`[search] light mode youtubeQuery=${JSON.stringify(userQuery)}`);
     const exact = await searchYouTubeExact(userQuery, {
@@ -162,12 +222,6 @@ export async function runSearchPipeline(
     pool = exact.videos;
     youtubeQuery = exact.query;
     queries = [exact.query];
-
-    emit({
-      type: "candidates",
-      count: pool.length,
-      videos: pool.slice(0, Math.min(24, pool.length)),
-    });
 
     if (!pool.length) {
       throw new Error(`No landscape videos found for YouTube query "${youtubeQuery}".`);
@@ -179,25 +233,34 @@ export async function runSearchPipeline(
       );
     }
 
-    // Keep YouTube relevance order — client can re-sort by views via Research filter.
-    // Still gather topicContext so generate knows venue / authentic visuals (no result cull).
-    const results = pool;
-    const titles = results.slice(0, 8).map((v) => v.title);
     const topicContext = await gatherTopicContext(title, hook, emit);
+    const gated = await gatePoolForDisplay(pool, {
+      title,
+      hook,
+      topicContext,
+      emit,
+    });
+
+    if (!gated.results.length) {
+      throw new Error(
+        "All thumbnails were blocked by the content safety gate — try a different query."
+      );
+    }
+
+    const titles = gated.results.slice(0, 8).map((v) => v.title);
     const complete = {
       type: "complete" as const,
-      results,
-      rejectedResults: [] as RejectedVideo[],
-      filterSummary: topicContext
-        ? `Showing ${results.length} YouTube results (unfiltered). Context: ${topicContext.setting}. Sort by views in Research filters.`
-        : `Showing ${results.length} YouTube results in search order (no Gemini filter). Sort by views in Research filters.`,
+      results: gated.results,
+      rejectedResults: gated.rejectedResults,
+      filterSummary: gated.filterSummary,
       styleBrief: styleBriefFromContext(title, hook, topicContext, titles),
       titleSuggestions: titles.slice(0, 5),
-      filteredCount: 0,
-      qualityRejected: 0,
-      channelStats: { kept: 0, droppedOffTopic: 0 },
+      filteredCount: gated.rejectedResults.length,
+      qualityRejected: gated.rejectedResults.length,
+      channelStats: { kept: 0, droppedOffTopic: gated.rejectedResults.length },
       topicContext,
-      source: `${exact.source}+unfiltered`,
+      contentGate: gated.contentGate,
+      source: `${exact.source}+content-gate`,
       queries,
       youtubeQuery,
       filterMode,
@@ -206,13 +269,13 @@ export async function runSearchPipeline(
     return complete;
   }
 
-  // Strict: expanded queries for a larger pool, still no Gemini cull — 50+ YouTube-order thumbs.
+  // Strict: expanded queries for a larger pool, then content gate before display.
   queries = await expandQueriesForTopic(title, hook);
   youtubeQuery = queries[0] || userQuery;
   emit({
     type: "status",
     step: "search",
-    message: `YouTube search (50+ unfiltered) — primary: "${youtubeQuery}"`,
+    message: `YouTube search (50+) — primary: "${youtubeQuery}"`,
   });
   pool = await searchLongFormViaYtsr(title, {
     channels,
@@ -245,35 +308,38 @@ export async function runSearchPipeline(
     );
   }
 
-  emit({
-    type: "candidates",
-    count: pool.length,
-    videos: pool.slice(0, 24),
-  });
-
   emit({ type: "status", step: "map", message: "Mapping thumbnails to opening scripts…" });
   const mappings = await buildVideoMappings(pool.slice(0, minResults), title, 8);
   emit({ type: "mappings", mappings });
 
-  // Keep fetch / relevance order — client Research filter can sort by views.
-  // Gather topicContext without culling the unfiltered thumb grid.
-  const results = pool;
-  const titles = results.slice(0, 8).map((v) => v.title);
   const topicContext = await gatherTopicContext(title, hook, emit);
+  const gated = await gatePoolForDisplay(pool, {
+    title,
+    hook,
+    topicContext,
+    emit,
+  });
+
+  if (!gated.results.length) {
+    throw new Error(
+      "All thumbnails were blocked by the content safety gate — try a different query."
+    );
+  }
+
+  const titles = gated.results.slice(0, 8).map((v) => v.title);
   const complete = {
     type: "complete" as const,
-    results,
-    rejectedResults: [] as RejectedVideo[],
-    filterSummary: topicContext
-      ? `Showing ${results.length} YouTube results (unfiltered). Context: ${topicContext.setting}. Sort by views in Research filters.`
-      : `Showing ${results.length} YouTube results (no Gemini filter). Sort by views in Research filters.`,
+    results: gated.results,
+    rejectedResults: gated.rejectedResults,
+    filterSummary: gated.filterSummary,
     styleBrief: styleBriefFromContext(title, hook, topicContext, titles),
     titleSuggestions: titles.slice(0, 5),
-    filteredCount: 0,
-    qualityRejected: 0,
-    channelStats: { kept: 0, droppedOffTopic: 0 },
+    filteredCount: gated.rejectedResults.length,
+    qualityRejected: gated.rejectedResults.length,
+    channelStats: { kept: 0, droppedOffTopic: gated.rejectedResults.length },
     topicContext,
-    source: "ytsr-landscape+unfiltered",
+    contentGate: gated.contentGate,
+    source: "ytsr-landscape+content-gate",
     queries,
     youtubeQuery,
     filterMode,

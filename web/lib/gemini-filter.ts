@@ -52,7 +52,45 @@ export type GeminiFilterResult = {
   channelStats: { kept: number; droppedOffTopic: number };
   qualityRejected: number;
   topicContext?: TopicContext;
+  /** Present when the display safety gate ran. */
+  contentGate?: ContentGateSummary;
 };
+
+/** Display-gate codes returned by Gemini vision / heuristics. */
+export type ContentGateCode = "nsfw" | "irrelevant" | "other";
+
+export type ImageContentVerdict = {
+  id: string;
+  allow: boolean;
+  reasons: string[];
+  codes: ContentGateCode[];
+  /** Relevance / "other" drops only when high; NSFW always hard when flagged. */
+  confidence?: "high" | "low";
+};
+
+/**
+ * Fail-open / fail-closed policy (display gate):
+ * - NSFW on non-adult query: fail-closed — hide on NSFW verdict OR check error.
+ * - NSFW on adult query: allow matching adult imagery; still drop confident off-topic.
+ * - Irrelevant / other: soft-drop only on confident (high) verdicts; fail-open on errors
+ *   so a flaky check does not empty the research grid.
+ */
+export type ContentGateSummary = {
+  adultQuery: boolean;
+  allowed: ScrapedVideo[];
+  rejected: RejectedVideo[];
+  nsfwDropped: number;
+  irrelevantDropped: number;
+  otherDropped: number;
+  checkErrors: number;
+};
+
+/** Clear adult-intent phrases — ambiguous topics default to non-adult (safer). */
+const ADULT_QUERY_RE =
+  /\b(nsfw|porn(?:o|ography)?|xxx|onlyfans|hentai|erotica?|nude\b|nudity|naked\b|strip(?:per|ping|tease)?|sex\s*tape|adult\s*(?:content|video|film|movie|thumb|thumbnail)|explicit\s*(?:sex|nude|content)|lingerie\s*(?:haul|try[- ]?on)|softcore|hardcore\s*sex)\b/i;
+
+const NSFW_TITLE_RE =
+  /\b(nsfw|porn(?:o|ography)?|xxx|onlyfans|hentai|nude\b|nudity|naked\b|sex\s*tape|explicit\s*(?:sex|nude)|strip(?:per|tease)|softcore)\b/i;
 
 type GeminiFilterResponse = {
   keptIds?: string[];
@@ -406,6 +444,479 @@ If the query is a named event/sport/product, encode its real-world constraints (
 }
 
 /**
+ * Fast local adult-query detector. Ambiguous topics return false (safer —
+ * NSFW imagery stays banned unless the query is clearly adult-oriented).
+ */
+export function isAdultOrientedQueryHeuristic(topic: string, hook?: string): boolean {
+  const text = `${topic}\n${hook || ""}`.trim();
+  if (!text) return false;
+  return ADULT_QUERY_RE.test(text);
+}
+
+/** Title/description NSFW heuristic when vision is unavailable. */
+export function looksLikeNsfwMetadata(title: string, description?: string): boolean {
+  return NSFW_TITLE_RE.test(`${title}\n${description || ""}`);
+}
+
+/**
+ * Detect whether the user topic/hook is adult-oriented.
+ * Uses heuristics first; optional Gemini text pass only when ambiguous and keyed.
+ * On Gemini failure → false (err toward safety / NSFW blocked).
+ */
+export async function detectAdultOrientedQuery(
+  apiKey: string | undefined,
+  topic: string,
+  hook?: string
+): Promise<boolean> {
+  if (isAdultOrientedQueryHeuristic(topic, hook)) return true;
+  if (!apiKey) return false;
+
+  const text = `${topic}\n${hook || ""}`.trim();
+  // Skip Gemini when clearly non-adult everyday topics (saves latency).
+  if (text.length < 3) return false;
+
+  try {
+    const prompt = `Is this YouTube thumbnail RESEARCH QUERY clearly requesting adult / NSFW / erotic / pornographic content?
+
+QUERY: "${topic}"
+${hook ? `Notes: ${hook}` : ""}
+
+Return ONLY JSON: { "adultQuery": boolean, "reason": "short" }
+
+Rules:
+- true ONLY when the user clearly wants adult/NSFW/erotic imagery.
+- Sex education, anatomy, romance movies, fitness in gym clothes, beachwear fashion → false unless explicitly erotic/NSFW.
+- If ambiguous, return false.`;
+
+    const raw = await geminiGenerate(apiKey, [{ text: prompt }], {
+      temperature: 0,
+      maxOutputTokens: 120,
+      timeoutMs: 12_000,
+      responseSchema: {
+        type: "OBJECT",
+        properties: {
+          adultQuery: { type: "BOOLEAN" },
+          reason: { type: "STRING" },
+        },
+        required: ["adultQuery"],
+      },
+    });
+    const parsed = parseJsonObject<{ adultQuery?: boolean }>(raw);
+    return parsed.adultQuery === true;
+  } catch (err) {
+    console.warn("[gemini-filter] adultQuery detect failed — treating as non-adult:", err);
+    return false;
+  }
+}
+
+function normalizeGateCodes(raw: unknown): ContentGateCode[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ContentGateCode[] = [];
+  for (const c of raw) {
+    const s = String(c).toLowerCase();
+    if (s === "nsfw" || s === "irrelevant" || s === "other") out.push(s);
+  }
+  return [...new Set(out)];
+}
+
+/**
+ * Apply fail-open/fail-closed policy to a single verdict.
+ * Returns whether the image may be shown.
+ */
+export function shouldAllowGatedImage(
+  verdict: ImageContentVerdict,
+  adultQuery: boolean
+): boolean {
+  const codes = verdict.codes || [];
+  const confidence = verdict.confidence === "high" ? "high" : "low";
+  const hasNsfw = codes.includes("nsfw");
+  const hasIrrelevant = codes.includes("irrelevant");
+  const hasOther = codes.includes("other");
+
+  // Hard ban NSFW unless the query itself is adult-oriented.
+  if (hasNsfw && !adultQuery) return false;
+
+  // Soft-drop only confident irrelevance / other (fail-open when low confidence).
+  if (hasIrrelevant && confidence === "high") return false;
+  if (hasOther && confidence === "high") return false;
+
+  // Adult query + NSFW (and not confidently irrelevant/other): allow.
+  if (hasNsfw && adultQuery) return true;
+
+  if (verdict.allow === false && confidence === "high") return false;
+
+  return true;
+}
+
+type GateBatchParsed = {
+  results?: Array<{
+    id?: string;
+    allow?: boolean;
+    reasons?: string[];
+    codes?: string[];
+    confidence?: string;
+  }>;
+};
+
+async function visionGateBatch(
+  apiKey: string,
+  batch: ScrapedVideo[],
+  options: {
+    topic: string;
+    hook?: string;
+    topicContext?: TopicContext;
+    adultQuery: boolean;
+  }
+): Promise<Map<string, ImageContentVerdict>> {
+  const { topic, hook, topicContext, adultQuery } = options;
+  const out = new Map<string, ImageContentVerdict>();
+
+  const { parts: thumbParts, withThumbs } = await buildThumbParts(batch, batch.length);
+  const ctxBlock = topicContext ? formatTopicContext(topicContext) : `TOPIC: "${topic}"`;
+
+  const prompt = `You are a YouTube thumbnail DISPLAY SAFETY gate. Decide allow/deny for each candidate BEFORE it is shown to the user.
+
+USER QUERY: "${topic}"
+${hook ? `User notes:\n${hook}` : ""}
+adultQuery=${adultQuery} (if true, adult/NSFW imagery matching the query is allowed; if false, hard-ban NSFW)
+
+${ctxBlock}
+
+For EACH thumbnail (images follow, labeled with id=…), return a verdict.
+
+HARD RULES:
+1. codes may include: "nsfw" | "irrelevant" | "other"
+2. NSFW = sexual/pornographic/explicit adult content, graphic nudity, fetish, explicit genital focus, porn thumbnails.
+   - When adultQuery=false: allow=false and include "nsfw" for any NSFW image.
+   - When adultQuery=true: do NOT ban NSFW solely for being adult; still ban if unrelated to the query ("irrelevant").
+3. irrelevant = thumbnail has no meaningful relation to the query/topic (wrong subject/domain). Use confidence="high" only when clearly unrelated.
+4. other = gore, extreme violence, hate symbols, or otherwise inappropriate for a thumbnail research tool — confidence="high" when clear.
+5. Beachwear, gym clothes, kissing in a romance trailer, medical anatomy diagrams → NOT nsfw unless clearly erotic/pornographic.
+6. NEVER invent ids. Judge only the provided candidates.
+7. Prefer allow=true when unsure about relevance (soft). Prefer allow=false when unsure about NSFW and adultQuery=false.
+
+Return ONLY JSON:
+{
+  "results": [
+    { "id": "videoId", "allow": true, "reasons": [], "codes": [], "confidence": "high"|"low" }
+  ]
+}`;
+
+  try {
+    const text = await geminiGenerate(
+      apiKey,
+      [{ text: prompt }, ...thumbParts],
+      { temperature: 0, maxOutputTokens: 2048, timeoutMs: 35_000 }
+    );
+    const parsed = parseJsonObject<GateBatchParsed>(text);
+    const byId = new Map<string, ImageContentVerdict>();
+    for (const row of parsed.results || []) {
+      const id = String(row.id || "").trim();
+      if (!id) continue;
+      byId.set(id, {
+        id,
+        allow: row.allow !== false,
+        reasons: Array.isArray(row.reasons)
+          ? row.reasons.map(String).filter(Boolean).slice(0, 4)
+          : [],
+        codes: normalizeGateCodes(row.codes),
+        confidence: row.confidence === "high" ? "high" : "low",
+      });
+    }
+
+    for (const v of batch) {
+      const found = byId.get(v.videoId);
+      if (found) {
+        out.set(v.videoId, found);
+        continue;
+      }
+      // Model omitted id — title heuristic for NSFW; relevance fail-open.
+      const nsfwMeta = looksLikeNsfwMetadata(v.title, v.description);
+      out.set(v.videoId, {
+        id: v.videoId,
+        allow: !(nsfwMeta && !adultQuery),
+        reasons: nsfwMeta && !adultQuery ? ["nsfw metadata heuristic"] : ["model omitted — kept"],
+        codes: nsfwMeta && !adultQuery ? ["nsfw"] : [],
+        confidence: "low",
+      });
+    }
+    console.log(
+      `[gemini-filter] contentGate batch=${batch.length} thumbs=${withThumbs} adultQuery=${adultQuery}`
+    );
+  } catch (err) {
+    console.warn("[gemini-filter] contentGate batch failed:", err);
+    // Batch API error: do not wipe the grid. Fall back to metadata NSFW
+    // heuristic (fail-closed only for clear NSFW titles); relevance fail-open.
+    for (const v of batch) {
+      const nsfwMeta = looksLikeNsfwMetadata(v.title, v.description);
+      if (!adultQuery && nsfwMeta) {
+        out.set(v.videoId, {
+          id: v.videoId,
+          allow: false,
+          reasons: ["nsfw metadata after check error"],
+          codes: ["nsfw"],
+          confidence: "low",
+        });
+      } else {
+        out.set(v.videoId, {
+          id: v.videoId,
+          allow: true,
+          reasons: ["batch check failed — metadata fallback"],
+          codes: [],
+          confidence: "low",
+        });
+      }
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Gate research / inspiration thumbnails before display.
+ * Batches vision checks; applies NSFW fail-closed (non-adult) and relevance soft-drop.
+ */
+export async function gateThumbnailContent(
+  videos: ScrapedVideo[],
+  options: {
+    topic: string;
+    hook?: string;
+    topicContext?: TopicContext;
+    adultQuery?: boolean;
+    /** Max candidates to vision-check; remainder uses metadata NSFW heuristic only. */
+    visionLimit?: number;
+    batchSize?: number;
+    apiKey?: string;
+  }
+): Promise<ContentGateSummary> {
+  const topic = options.topic.trim();
+  const hook = options.hook;
+  const apiKey =
+    options.apiKey || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  const adultQuery =
+    options.adultQuery ?? (await detectAdultOrientedQuery(apiKey, topic, hook));
+  const visionLimit = Math.min(options.visionLimit ?? 64, videos.length);
+  const batchSize = Math.max(4, Math.min(options.batchSize ?? 8, 12));
+
+  const allowed: ScrapedVideo[] = [];
+  const rejected: RejectedVideo[] = [];
+  let nsfwDropped = 0;
+  let irrelevantDropped = 0;
+  let otherDropped = 0;
+  let checkErrors = 0;
+
+  const visionPool = videos.slice(0, visionLimit);
+  const remainder = videos.slice(visionLimit);
+  const verdicts = new Map<string, ImageContentVerdict>();
+
+  if (apiKey && visionPool.length) {
+    for (let i = 0; i < visionPool.length; i += batchSize) {
+      const batch = visionPool.slice(i, i + batchSize);
+      const batchVerdicts = await visionGateBatch(apiKey, batch, {
+        topic,
+        hook,
+        topicContext: options.topicContext,
+        adultQuery,
+      });
+      for (const [id, v] of batchVerdicts) {
+        verdicts.set(id, v);
+        if (v.reasons.some((r) => /check failed/i.test(r))) checkErrors += 1;
+      }
+    }
+  } else {
+    // No API key — metadata NSFW heuristic only.
+    for (const v of visionPool) {
+      const nsfwMeta = looksLikeNsfwMetadata(v.title, v.description);
+      verdicts.set(v.videoId, {
+        id: v.videoId,
+        allow: !(nsfwMeta && !adultQuery),
+        reasons: nsfwMeta && !adultQuery ? ["nsfw metadata (no vision key)"] : [],
+        codes: nsfwMeta && !adultQuery ? ["nsfw"] : [],
+        confidence: "low",
+      });
+    }
+  }
+
+  // Remainder: metadata only (relevance fail-open).
+  for (const v of remainder) {
+    const nsfwMeta = looksLikeNsfwMetadata(v.title, v.description);
+    verdicts.set(v.videoId, {
+      id: v.videoId,
+      allow: !(nsfwMeta && !adultQuery),
+      reasons: nsfwMeta && !adultQuery ? ["nsfw metadata beyond vision limit"] : [],
+      codes: nsfwMeta && !adultQuery ? ["nsfw"] : [],
+      confidence: "low",
+    });
+  }
+
+  for (const v of videos) {
+    const verdict = verdicts.get(v.videoId) || {
+      id: v.videoId,
+      allow: true,
+      reasons: [],
+      codes: [] as ContentGateCode[],
+      confidence: "low" as const,
+    };
+    if (shouldAllowGatedImage(verdict, adultQuery)) {
+      allowed.push(v);
+      continue;
+    }
+    const reason =
+      verdict.reasons[0] ||
+      (verdict.codes.includes("nsfw")
+        ? "nsfw blocked"
+        : verdict.codes.includes("irrelevant")
+          ? "irrelevant to topic"
+          : "blocked by content gate");
+    rejected.push({ ...v, rejectReason: reason });
+    if (verdict.codes.includes("nsfw")) nsfwDropped += 1;
+    else if (verdict.codes.includes("irrelevant")) irrelevantDropped += 1;
+    else otherDropped += 1;
+  }
+
+  console.log(
+    `[gemini-filter] contentGate done adultQuery=${adultQuery} kept=${allowed.length}/${videos.length} nsfw=${nsfwDropped} irrelevant=${irrelevantDropped} other=${otherDropped} errors=${checkErrors}`
+  );
+
+  return {
+    adultQuery,
+    allowed,
+    rejected,
+    nsfwDropped,
+    irrelevantDropped,
+    otherDropped,
+    checkErrors,
+  };
+}
+
+/**
+ * NSFW-only gate for generated (or inline base64) images before display.
+ * Relevance is not scored — generation is user-initiated from their topic.
+ * Policy: NSFW fail-closed when non-adult query; adult query allows matching NSFW.
+ */
+export async function gateGeneratedImages(
+  images: Array<{ id: string; mimeType?: string; dataBase64: string }>,
+  options: { topic: string; hook?: string; adultQuery?: boolean; apiKey?: string }
+): Promise<{
+  adultQuery: boolean;
+  allowedIds: string[];
+  rejected: Array<{ id: string; reasons: string[]; codes: ContentGateCode[] }>;
+}> {
+  const apiKey =
+    options.apiKey || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  const adultQuery =
+    options.adultQuery ??
+    (await detectAdultOrientedQuery(apiKey, options.topic, options.hook));
+
+  if (!images.length) {
+    return { adultQuery, allowedIds: [], rejected: [] };
+  }
+
+  if (!apiKey) {
+    // Cannot vision-check — fail-open for generated (user-initiated) but log.
+    console.warn("[gemini-filter] gateGeneratedImages skipped — no API key");
+    return { adultQuery, allowedIds: images.map((i) => i.id), rejected: [] };
+  }
+
+  if (adultQuery) {
+    return { adultQuery, allowedIds: images.map((i) => i.id), rejected: [] };
+  }
+
+  const parts: GeminiPart[] = [
+    {
+      text: `You gate GENERATED YouTube thumbnails for NSFW before display.
+
+TOPIC: "${options.topic}"
+${options.hook ? `Notes: ${options.hook}` : ""}
+adultQuery=false — hard-ban explicit/adult/pornographic imagery.
+
+For each image (labeled id=…), return allow + codes.
+codes: "nsfw" if explicit/adult; "other" for gore/hate; else [].
+If unsure about NSFW, set allow=false and codes=["nsfw"] (fail-closed).
+
+Return ONLY JSON:
+{ "results": [{ "id": "id", "allow": true, "reasons": [], "codes": [] }] }`,
+    },
+  ];
+
+  for (const img of images) {
+    parts.push({ text: `IMAGE id=${img.id}` });
+    parts.push({
+      inlineData: {
+        mimeType: img.mimeType || "image/png",
+        data: img.dataBase64,
+      },
+    });
+  }
+
+  try {
+    const text = await geminiGenerate(apiKey, parts, {
+      temperature: 0,
+      maxOutputTokens: 800,
+      timeoutMs: 30_000,
+    });
+    const parsed = parseJsonObject<GateBatchParsed>(text);
+    const allowedIds: string[] = [];
+    const rejected: Array<{ id: string; reasons: string[]; codes: ContentGateCode[] }> =
+      [];
+    const seen = new Set<string>();
+    for (const row of parsed.results || []) {
+      const id = String(row.id || "").trim();
+      if (!id) continue;
+      seen.add(id);
+      const codes = normalizeGateCodes(row.codes);
+      const allow =
+        row.allow !== false && !codes.includes("nsfw") && !codes.includes("other");
+      if (allow) allowedIds.push(id);
+      else {
+        rejected.push({
+          id,
+          reasons: Array.isArray(row.reasons)
+            ? row.reasons.map(String)
+            : ["blocked by NSFW gate"],
+          codes: codes.length ? codes : ["nsfw"],
+        });
+      }
+    }
+    // Omitted ids → fail-closed (non-adult).
+    for (const img of images) {
+      if (seen.has(img.id)) continue;
+      rejected.push({
+        id: img.id,
+        reasons: ["omitted from safety response — hidden"],
+        codes: ["nsfw"],
+      });
+    }
+    console.log(
+      `[gemini-filter] gateGenerated kept=${allowedIds.length}/${images.length} dropped=${rejected.length}`
+    );
+    return { adultQuery, allowedIds, rejected };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Timeouts / 5xx are not NSFW evidence. User already asked to generate this
+    // topic — hide-everything on timeout was dropping valid thumbs (e.g. trains).
+    const timeout = /timeout|aborted|AbortError|timed out/i.test(msg);
+    if (timeout) {
+      console.warn(
+        "[gemini-filter] gateGenerated timed out — fail-open (user-initiated generate):",
+        msg
+      );
+      return { adultQuery, allowedIds: images.map((i) => i.id), rejected: [] };
+    }
+    console.warn("[gemini-filter] gateGenerated failed — fail-closed:", err);
+    return {
+      adultQuery,
+      allowedIds: [],
+      rejected: images.map((img) => ({
+        id: img.id,
+        reasons: ["safety check failed — hidden (fail-closed NSFW)"],
+        codes: ["nsfw" as const],
+      })),
+    };
+  }
+}
+
+/**
  * Light mode: relevance/context filter, then sort kept results by views descending.
  */
 async function filterLightTopResults(
@@ -603,27 +1114,36 @@ export async function filterAndCurateWithGemini(
 
   if (!apiKey) {
     const sorted = sortByViewsDescending(videos).slice(0, targetCount);
-    return {
-      videos: sorted,
-      rejectedVideos: [],
-      styleBrief: emptyBrief(title, hook),
-      titleSuggestions: sorted.slice(0, 3).map((v) => v.title),
-      filteredCount: videos.length - sorted.length,
-      channelStats: { kept: 0, droppedOffTopic: 0 },
-      qualityRejected: 0,
-    };
+    return applyContentGateToFilterResult(
+      {
+        videos: sorted,
+        rejectedVideos: [],
+        styleBrief: emptyBrief(title, hook),
+        titleSuggestions: sorted.slice(0, 3).map((v) => v.title),
+        filteredCount: videos.length - sorted.length,
+        channelStats: { kept: 0, droppedOffTopic: 0 },
+        qualityRejected: 0,
+      },
+      { topic: title, hook }
+    );
   }
 
   const topicContext =
     options?.topicContext || (await resolveTopicContext(apiKey, title, hook));
 
   if (mode === "light") {
-    return filterLightTopResults(title, videos, {
+    const light = await filterLightTopResults(title, videos, {
       apiKey,
       channelHandles,
       hook,
       targetCount,
       topicContext,
+    });
+    return applyContentGateToFilterResult(light, {
+      topic: title,
+      hook,
+      topicContext,
+      apiKey,
     });
   }
 
@@ -767,22 +1287,25 @@ Return ONLY JSON:
       parsed.titleSuggestions?.filter((t) => t.trim()).slice(0, 5) ||
       kept.slice(0, 3).map((v) => v.title);
 
-    return {
-      videos: kept,
-      rejectedVideos,
-      filterSummary: parsed.summary,
-      styleBrief,
-      titleSuggestions,
-      filteredCount: videos.length - kept.length,
-      qualityRejected: rejectedCount,
-      channelStats: {
-        kept:
-          parsed.channelKept ??
-          kept.filter((v) => videoFromReferenceChannel(v, channelHandles)).length,
-        droppedOffTopic: parsed.channelDropped ?? 0,
+    return applyContentGateToFilterResult(
+      {
+        videos: kept,
+        rejectedVideos,
+        filterSummary: parsed.summary,
+        styleBrief,
+        titleSuggestions,
+        filteredCount: videos.length - kept.length,
+        qualityRejected: rejectedCount,
+        channelStats: {
+          kept:
+            parsed.channelKept ??
+            kept.filter((v) => videoFromReferenceChannel(v, channelHandles)).length,
+          droppedOffTopic: parsed.channelDropped ?? 0,
+        },
+        topicContext,
       },
-      topicContext,
-    };
+      { topic: title, hook, topicContext, apiKey }
+    );
   } catch (err) {
     console.error("Gemini filter error:", err);
     const fallback = sortByViewsDescending(
@@ -791,19 +1314,62 @@ Return ONLY JSON:
     const safe = fallback.length
       ? fallback
       : sortByViewsDescending(videos).slice(0, targetCount);
-    return {
-      videos: safe,
-      rejectedVideos: [],
-      styleBrief: {
-        ...emptyBrief(title, hook),
-        creativeDirection: `${topicContext.whatItIs}. Setting: ${topicContext.setting}.`,
-        avoidList: topicContext.rejectVisuals.slice(0, 5),
+    return applyContentGateToFilterResult(
+      {
+        videos: safe,
+        rejectedVideos: [],
+        styleBrief: {
+          ...emptyBrief(title, hook),
+          creativeDirection: `${topicContext.whatItIs}. Setting: ${topicContext.setting}.`,
+          avoidList: topicContext.rejectVisuals.slice(0, 5),
+        },
+        titleSuggestions: safe.map((v) => v.title).slice(0, 3),
+        filteredCount: videos.length - safe.length,
+        qualityRejected: 0,
+        channelStats: { kept: 0, droppedOffTopic: 0 },
+        topicContext,
       },
-      titleSuggestions: safe.map((v) => v.title).slice(0, 3),
-      filteredCount: videos.length - safe.length,
-      qualityRejected: 0,
-      channelStats: { kept: 0, droppedOffTopic: 0 },
-      topicContext,
-    };
+      { topic: title, hook, topicContext, apiKey }
+    );
   }
+}
+
+/** Final display safety pass on curated results. */
+async function applyContentGateToFilterResult(
+  result: GeminiFilterResult,
+  options: {
+    topic: string;
+    hook?: string;
+    topicContext?: TopicContext;
+    apiKey?: string;
+  }
+): Promise<GeminiFilterResult> {
+  if (!result.videos.length) return result;
+
+  const gate = await gateThumbnailContent(result.videos, {
+    topic: options.topic,
+    hook: options.hook,
+    topicContext: options.topicContext || result.topicContext,
+    apiKey: options.apiKey,
+  });
+
+  const gateRejected = gate.rejected;
+  const summaryBits = [
+    result.filterSummary,
+    gate.nsfwDropped ? `blocked ${gate.nsfwDropped} NSFW` : null,
+    gate.irrelevantDropped
+      ? `dropped ${gate.irrelevantDropped} irrelevant`
+      : null,
+    gate.adultQuery ? "adult query — NSFW allowed when on-topic" : null,
+  ].filter(Boolean);
+
+  return {
+    ...result,
+    videos: gate.allowed,
+    rejectedVideos: [...result.rejectedVideos, ...gateRejected],
+    filterSummary: summaryBits.join(" · ") || result.filterSummary,
+    filteredCount: result.filteredCount + gateRejected.length,
+    qualityRejected: result.qualityRejected + gateRejected.length,
+    contentGate: gate,
+  };
 }
