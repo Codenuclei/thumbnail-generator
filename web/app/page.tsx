@@ -181,7 +181,7 @@ export default function Home() {
   const [geminiStatus, setGeminiStatus] = useState("checking…");
   const [autoSelect, setAutoSelect] = useState(false);
   /** Light = exact YouTube query unfiltered 50+; strict = expanded queries unfiltered 50+. */
-  const [lightFilter, setLightFilter] = useState(true);
+  const lightFilter = true;
   const [studioTab, setStudioTab] = useState<StudioTab>("topic");
   const [canvasTab, setCanvasTab] = useState<"overview" | "preview" | "edit">("overview");
   const [pipeline, setPipeline] = useState<PipelineOverview | null>(null);
@@ -2621,19 +2621,6 @@ export default function Home() {
                     </>
                   )}
                 </Button>
-                <div className="flex items-center gap-2">
-                  <Checkbox
-                    id="lightFilter"
-                    checked={lightFilter}
-                    onCheckedChange={(v) => setLightFilter(v === true)}
-                  />
-                  <Label
-                    htmlFor="lightFilter"
-                    className="cursor-pointer font-normal text-[var(--text-secondary-chromatic)]"
-                  >
-                    Best one
-                  </Label>
-                </div>
                 <Button
                   type="button"
                   variant="ghost"
@@ -2646,9 +2633,8 @@ export default function Home() {
                 </Button>
               </div>
               <p className="type-caption text-[var(--text-tertiary)]">
-                {lightFilter
-                  ? "Best YouTube match as typed — 50+ results (no Gemini cull). Use Filters on Research to sort by Relevance or Views."
-                  : "Expands queries for a bigger unfiltered pool. Use Filters on Research to sort by Relevance or Views."}
+                Searches YouTube as typed — 50+ results (no Gemini cull). Use
+                Filters on Research to sort by Relevance or Views.
               </p>
             </section>
           </div>
