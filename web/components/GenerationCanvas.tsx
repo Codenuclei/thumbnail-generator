@@ -478,30 +478,6 @@ export function GenerationCanvas({
                   </Panel>
                 )}
 
-                {pipeline.liked.length > 0 && (
-                  <Panel title="Liked references">
-                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                      {pipeline.liked.map((r) => (
-                        <div
-                          key={r.videoId}
-                          className="overflow-hidden rounded-[8px] border border-[#efefef] bg-white"
-                        >
-                          <img
-                            src={r.thumbnailUrl}
-                            alt={r.title}
-                            className="aspect-video w-full object-cover"
-                          />
-                          {r.comment && (
-                            <p className="p-2 type-caption text-[#5c5e60] line-clamp-2">
-                              {r.comment}
-                            </p>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </Panel>
-                )}
-
                 <Panel title="Selected for generation">
                   {pipeline.references.filter((r) => r.selected).length === 0 ? (
                     <p className="type-ui font-normal text-[#5c5e60]">

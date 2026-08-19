@@ -508,6 +508,35 @@ export default function Home() {
           storageUrl ? ", stored" : ""
         }`
       );
+
+      // Auto-select colors from the uploaded video (only when video is provided).
+      const readyClip: OpeningFrameClip = {
+        id,
+        name: displayName,
+        status: "ready",
+        mimeType,
+        data: frameData,
+        label: data.label || `Frame @${data.timestampSec}s: ${displayName.slice(0, 40)}`,
+        previewUrl: pickedCandidate?.previewUrl
+          ? pickedCandidate.previewUrl
+          : `data:${mimeType};base64,${frameData}`,
+        timestampSec: pickedCandidate?.timestampSec ?? data.timestampSec,
+        bytesRead: file.size,
+        durationSec,
+        frameCount: candidates.length,
+        storageUrl,
+        storagePath,
+        frameStorageUrl,
+        candidates,
+        geminiPickIndex: data.geminiPickIndex,
+        geminiReason: data.geminiReason,
+        pickSource: data.pickSource,
+      };
+      try {
+        await handleAnalyzeMedia({ openingFramesOverride: [readyClip] });
+      } catch {
+        // Frame is ready; color auto-select is best-effort.
+      }
     } catch (err) {
       videoFilesRef.current.delete(id);
       setOpeningFrames((prev) => prev.filter((clip) => clip.id !== id));
@@ -722,7 +751,14 @@ export default function Home() {
           } satisfies PersistedMediaPhoto;
         })
       );
-      setMediaPhotos((previous) => [...previous, ...compressed].slice(0, 12));
+      const nextPhotos = [...mediaPhotos, ...compressed].slice(0, 12);
+      setMediaPhotos(nextPhotos);
+      // Auto-select colors from uploaded media when provided.
+      try {
+        await handleAnalyzeMedia({ photosOverride: nextPhotos });
+      } catch {
+        // Photos are saved; color auto-select is best-effort.
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not read photo");
     }
@@ -731,6 +767,7 @@ export default function Home() {
   async function handleAnalyzeMedia(options?: {
     youtubeUrl?: string;
     openingFramesOverride?: OpeningFrameClip[];
+    photosOverride?: PersistedMediaPhoto[];
   }) {
     if (analyzingMedia) return;
     setAnalyzingMedia(true);
@@ -739,8 +776,9 @@ export default function Home() {
     const clipsForAnalysis =
       options?.openingFramesOverride ||
       openingFrames.filter((f) => f.status === "ready");
+    const photosForAnalysis = options?.photosOverride || mediaPhotos;
     try {
-      const images: MediaImageInput[] = mediaPhotos.map((photo) => ({
+      const images: MediaImageInput[] = photosForAnalysis.map((photo) => ({
         id: photo.id,
         name: photo.name,
         kind: "photo",
@@ -1644,16 +1682,20 @@ export default function Home() {
     const current = normalizeStudioTab(studioTab);
     setStudioTab(next);
 
-    // Only pick colors once the user is done liking refs and heads into Style —
-    // never react per-like while they're still browsing/liking on Research.
+    // Colors: prefer uploaded video/photos when provided; else suggest from likes on Style.
     const enteringStyle = next === "style" && current !== "style";
-    if (
-      enteringStyle &&
-      likedVideos.length > 0 &&
-      !palettes.length &&
-      !suggestingPalettes
-    ) {
-      void suggestPalettes();
+    const hasUploadedMedia =
+      mediaPhotos.length > 0 || readyOpeningFrames.length > 0;
+    if (enteringStyle && !palettes.length) {
+      if (hasUploadedMedia && !analyzingMedia) {
+        void handleAnalyzeMedia();
+      } else if (
+        !hasUploadedMedia &&
+        likedVideos.length > 0 &&
+        !suggestingPalettes
+      ) {
+        void suggestPalettes();
+      }
     }
   }
 
@@ -1695,7 +1737,9 @@ export default function Home() {
     // Like / dislike apply immediately so button state updates right away
     applyRating(item.videoId, mode, existingComment);
     if (mode === "like") {
-      toast.success("Liked — palettes suggest automatically once you head to Style");
+      toast.success(
+        "Liked — colors auto-suggest on Style (or from uploaded video when provided)"
+      );
     } else {
       toast.success("Disliked");
     }
@@ -2063,8 +2107,18 @@ export default function Home() {
       return;
     }
 
-    if (likedVideos.length && !palettes.length && !suggestingPalettes) {
-      void suggestPalettes();
+    const hasUploadedMedia =
+      mediaPhotos.length > 0 || readyOpeningFrames.length > 0;
+    if (!palettes.length) {
+      if (hasUploadedMedia && !analyzingMedia) {
+        void handleAnalyzeMedia();
+      } else if (
+        !hasUploadedMedia &&
+        likedVideos.length &&
+        !suggestingPalettes
+      ) {
+        void suggestPalettes();
+      }
     }
 
     setLoading(true);
@@ -2505,7 +2559,7 @@ export default function Home() {
             <section className="space-y-4">
               <div className="grid gap-3 lg:grid-cols-[1.4fr_1fr] lg:items-start">
                 <div className="space-y-1.5">
-                  <Label htmlFor="topic">Video title</Label>
+                  <Label htmlFor="topic">Search</Label>
                   <Input
                     id="topic"
                     placeholder="How Alcohol Is Made in India"
@@ -2577,7 +2631,7 @@ export default function Home() {
                     htmlFor="lightFilter"
                     className="cursor-pointer font-normal text-[var(--text-secondary-chromatic)]"
                   >
-                    Exact YouTube query
+                    Best one
                   </Label>
                 </div>
                 <Button
@@ -2593,7 +2647,7 @@ export default function Home() {
               </div>
               <p className="type-caption text-[var(--text-tertiary)]">
                 {lightFilter
-                  ? "Fetches 50+ YouTube results (no Gemini cull). Use Filters on Research to sort by Relevance or Views."
+                  ? "Best YouTube match as typed — 50+ results (no Gemini cull). Use Filters on Research to sort by Relevance or Views."
                   : "Expands queries for a bigger unfiltered pool. Use Filters on Research to sort by Relevance or Views."}
               </p>
             </section>
