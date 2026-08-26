@@ -221,6 +221,8 @@ export default function Home() {
   const [compositionFactors, setCompositionFactors] = useState<string[]>([
     "rule-of-thirds",
     "diagonal",
+    "golden-spiral",
+    "pyramid",
   ]);
   const [sessionId, setSessionId] = useState(() => `sess-${Date.now()}`);
   const [shareSlug, setShareSlug] = useState<string | null>(null);
@@ -2077,6 +2079,8 @@ export default function Home() {
         cameraFilterLabel?: string;
         compositionFactor?: string;
         compositionFactorLabel?: string;
+        stagingRecipe?: string;
+        stagingLabel?: string;
         directionId?: string;
         directionName?: string;
       }>;
@@ -2152,6 +2156,8 @@ export default function Home() {
           cameraFilterLabel: v.cameraFilterLabel,
           compositionFactor: v.compositionFactor,
           compositionFactorLabel: v.compositionFactorLabel,
+          stagingRecipe: v.stagingRecipe,
+          stagingLabel: v.stagingLabel,
           directionId: v.directionId || dir.id,
           directionName: v.directionName || dir.name,
         }));
@@ -2277,7 +2283,7 @@ export default function Home() {
         seedVariant: {
           image: variant.image,
           label: variant.suggestedTitle || variant.label,
-          note: `Generate siblings inspired by this output — keep story, setting, and hook energy (${variant.cameraFilterLabel || "variant"} · ${variant.compositionFactorLabel || "framing"}).`,
+          note: `Generate siblings inspired by this output — keep topic and hook, but change action, crop scale, and place (${variant.stagingLabel || "new staging"} · ${variant.cameraFilterLabel || "variant"}).`,
         },
       });
       const variants: GeneratedVariant[] = Array.isArray(data.images)
@@ -2294,6 +2300,8 @@ export default function Home() {
             cameraFilterLabel: v.cameraFilterLabel,
             compositionFactor: v.compositionFactor,
             compositionFactorLabel: v.compositionFactorLabel,
+            stagingRecipe: v.stagingRecipe,
+            stagingLabel: v.stagingLabel,
           }))
         : [];
 

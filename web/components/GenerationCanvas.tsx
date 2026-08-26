@@ -44,6 +44,8 @@ export type GeneratedVariant = {
   cameraFilterLabel?: string;
   compositionFactor?: string;
   compositionFactorLabel?: string;
+  stagingRecipe?: string;
+  stagingLabel?: string;
   /** Creative direction this variant belongs to */
   directionId?: string;
   directionName?: string;
@@ -192,6 +194,11 @@ export function GenerationCanvas({
               {v.directionName && (
                 <Badge variant="default" className="type-caption font-normal">
                   {v.directionName}
+                </Badge>
+              )}
+              {v.stagingLabel && (
+                <Badge variant="default" className="type-caption font-normal">
+                  {v.stagingLabel}
                 </Badge>
               )}
               {v.cameraFilterLabel && (

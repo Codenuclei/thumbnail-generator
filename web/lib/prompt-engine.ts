@@ -20,6 +20,10 @@ import {
 } from "@/lib/font-engine";
 import { dryLessonsPromptBlock } from "@/lib/dry-learn";
 import { DEFAULT_MASTER_PROMPT } from "@/lib/master-prompt";
+import {
+  siblingStagingLock,
+  stagingRecipeForIndex,
+} from "@/lib/staging-recipes";
 
 export { DEFAULT_MASTER_PROMPT } from "@/lib/master-prompt";
 
@@ -29,31 +33,31 @@ export const CAMERA_FILTERS = [
     id: "daylight-35",
     label: "Neutral daylight 35mm",
     prompt:
-      "Camera: Canon EOS R5, 35mm f/2. Neutral daylight white balance (~5600K) — clean whites, accurate skin, soft contrast, mild grain. Even window/skylight, shallow DOF. NO warm amber/yellow cast, NO golden-hour orange wash, NO tungsten glow.",
+      "Camera: Canon EOS R5, 35mm f/2, eye-level medium. Neutral daylight (~5600K) — clean whites, accurate skin, soft contrast, mild grain. Even window/skylight, shallow DOF. Distinct from wide flash and tight 50mm siblings. NO warm amber/yellow cast, NO golden-hour orange wash, NO tungsten glow.",
   },
   {
     id: "flash-reportage",
     label: "Clean flash reportage",
     prompt:
-      "Camera: 28mm reportage, direct on-camera flash, high contrast blacks, slight motion on secondary action. Flash is white/neutral — not yellow. No color cast, no orange rim light.",
+      "Camera: 28mm reportage, WIDE and closer to the action than a 35mm portrait. Direct on-camera flash, high contrast blacks, slight motion on secondary action. Flash is white/neutral — not yellow. No color cast, no orange rim light.",
   },
   {
     id: "cool-factory",
     label: "Cool industrial",
     prompt:
-      "Camera: Fujifilm X-T5, 50mm f/1.8. Cool-neutral industrial light (daylight LEDs / overcast windows). Crisp edges, soft background. Prefer blue-gray or white practicals — NEVER amber factory sodium glow or yellow haze.",
+      "Camera: Fujifilm X-T5, 50mm f/1.8, TIGHTER crop than the 35mm sibling. Cool-neutral industrial light (daylight LEDs / overcast windows). Crisp edges, soft background. Prefer blue-gray or white practicals — NEVER amber factory sodium glow or yellow haze.",
   },
   {
     id: "studio-clean",
     label: "Clean studio plate",
     prompt:
-      "Camera: Sony A7IV, 40mm. Softbox / overhead daylight LED look — even exposure, accurate neutrals, slight grain. No halation, no lens flare blobs, no warm practical spill.",
+      "Camera: Sony A7IV, 40mm still-life height (table/counter), not a standing portrait lens. Softbox / overhead daylight LED — even exposure, accurate neutrals, slight grain. No halation, no lens flare blobs, no warm practical spill.",
   },
   {
     id: "hard-daylight",
     label: "Hard daylight",
     prompt:
-      "Camera: Nikon Z6 II, 24mm. Hard midday or open-shade daylight — saturated but photographic color, crisp edges. White balance locked neutral. No sunset/golden gel, no yellow fog.",
+      "Camera: Nikon Z6 II, 24mm WIDE, slightly high or low — not eye-level medium. Hard midday or open-shade daylight — saturated but photographic color, crisp edges. White balance locked neutral. No sunset/golden gel, no yellow fog.",
   },
   {
     id: "overcast-muted",
@@ -65,13 +69,13 @@ export const CAMERA_FILTERS = [
     id: "cleanroom-white",
     label: "Cleanroom white",
     prompt:
-      "Camera: 35mm eye-level. Bright fluorescent/LED cleanroom or warehouse — whites stay white, metals stay silver/steel. Zero yellow sodium vapor look, zero orange fill.",
+      "Camera: 85mm TIGHT, eye-level. Bright fluorescent/LED cleanroom or warehouse — whites stay white, metals stay silver/steel. Zero yellow sodium vapor look, zero orange fill.",
   },
   {
     id: "doc-handheld",
     label: "Doc handheld",
     prompt:
-      "Camera: handheld documentary, 35mm, eye-level or slight low angle. Natural location light corrected to neutral WB. Real grit OK; ban amber glows, lens flares, and cinematic orange-teal grading.",
+      "Camera: handheld documentary, 35mm, LOW angle (hip/table). Natural location light corrected to neutral WB. Real grit OK; ban amber glows, lens flares, and cinematic orange-teal grading.",
   },
 ] as const;
 
@@ -105,6 +109,10 @@ const COMPOSITION_MAP: Record<string, string> = {
     "Composition: subject cutout left or right over a real scene plate; cutout edge should feel like a clean photo edit (soft natural edge or subtle shadow) — NEVER a thick white/neon sticker outline, glow halo, or comic-panel stroke around the person.",
   data:
     "Composition: clean process/data overlay on a real photographed scene — thin lines and labels only; no glowing sci-fi screens.",
+  tight:
+    "Composition: extreme close crop on the hero object or the peak of the action — fill the frame. Environment is a thin sliver. Not a medium standing portrait.",
+  wide:
+    "Composition: wide enough to read the place. Architecture, depth, and context do work. Subject is not a centered talking-head fill.",
 };
 
 export function buildUltraPrompt(
@@ -130,6 +138,10 @@ export function buildUltraPrompt(
     compositionFactors?: string[];
     /** Preferred factor for this variant — use only if the scene fits */
     compositionFactorHint?: string;
+    /** Index into STAGING_RECIPES — exclusive story beat / action / crop */
+    stagingRecipeIndex?: number;
+    /** How many siblings this request is generating */
+    variantCount?: number;
     /** When true, attached refs include selected key-moment / video stills */
     useOpeningFrames?: boolean;
     /** Video still provided — primary frame drives subject; refs are style-only */
@@ -162,6 +174,8 @@ export function buildUltraPrompt(
   const hook = (options.hook || "").trim();
   const filter = cameraFilterForIndex(options.cameraFilterIndex ?? 0);
   const typeVariant = typographyVariantForIndex(options.typographyVariantIndex ?? 0);
+  const stagingIndex = options.stagingRecipeIndex ?? options.cameraFilterIndex ?? 0;
+  const staging = stagingRecipeForIndex(stagingIndex);
   const quality =
     (options.masterPrompt || "").trim() || DEFAULT_MASTER_PROMPT;
 
@@ -194,8 +208,10 @@ export function buildUltraPrompt(
     dryLessonsPromptBlock(),
     typeVariant.prompt,
     `Topic: ${topic.trim()}`,
-    "OPTIONAL SUBJECT ACTIVITY: Do not force an action or pose. Add a meaningful activity only when the topic, exact hook, supplied media, or shared/liked reference thumbnails clearly call for one. If an action is used, it must be relevant to the topic and/or reference thumbnails — never an unrelated generic pose. Inspect attached selected/liked refs and the research style brief for observed actions, poses, and emotional beats; prefer adapting that relevant energy to this topic instead of inventing walking, pointing, working, presenting, or reacting merely for variety. When no action is clearly supported, use the most natural static portrait, expression, object-focused composition, environment, or product shot.",
-    "VARIANT DIVERSITY: This image MUST look different from sibling variants through an appropriate mix of type treatment, framing, camera look, subject placement, expression, focal object, environment, and composition. Activity is NOT required for diversity. If meaningful actions are supported, vary them across siblings when practical without sacrificing topic/reference relevance. Do not reuse the same font layout across variants.",
+    siblingStagingLock(stagingIndex, options.variantCount ?? 4),
+    staging.prompt,
+    "SUBJECT ACTIVITY (required and topic-true): This variant MUST show a topic-relevant action or staging that is different from every sibling. Inspect attached selected/liked refs and the style brief for observed actions, then ADAPT that energy into THIS recipe — do not clone the same presenter-holds-object pose. Never invent an unrelated generic pose (random walking, pointing at nothing). If refs only show one repeated pose, break it with this recipe's beat.",
+    "VARIANT DIVERSITY (hard): Siblings must differ in ACTION, CROP SCALE, CAMERA HEIGHT, and PLACE. Type treatment, palette, and framing also change. Reusing the same font layout, the same standing-presenter pose, or the same object-on-board kitchen plate across variants = FAIL.",
   ];
 
   if (options.styleBrief) {

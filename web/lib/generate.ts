@@ -86,6 +86,8 @@ export type VariantSpec = {
   cameraFilterLabel?: string;
   compositionFactor?: string;
   compositionFactorLabel?: string;
+  stagingRecipe?: string;
+  stagingLabel?: string;
   suggestedTitle?: string;
   typographyZoneId?: PlacementZoneId;
 };
@@ -102,6 +104,8 @@ export type VariantImage = {
   cameraFilterLabel?: string;
   compositionFactor?: string;
   compositionFactorLabel?: string;
+  stagingRecipe?: string;
+  stagingLabel?: string;
   suggestedTitle?: string;
   backend: string;
   /** LLM-ops QA result for the delivered attempt (undefined when QA disabled). */
@@ -533,6 +537,8 @@ async function generateOneVariant(
     cameraFilterLabel: v.cameraFilterLabel,
     compositionFactor: v.compositionFactor,
     compositionFactorLabel: v.compositionFactorLabel,
+    stagingRecipe: v.stagingRecipe,
+    stagingLabel: v.stagingLabel,
     suggestedTitle: v.suggestedTitle,
     backend: result.backend,
     verification,

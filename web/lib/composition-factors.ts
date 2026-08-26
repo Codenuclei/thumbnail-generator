@@ -118,15 +118,15 @@ export function compositionFactorVariantPrompt(
     COMPOSITION_FACTORS.find((f) => f.id === preferredId) || pool[0];
 
   const lines = [
-    "FRAMING (intelligent — not mandatory):",
-    "Decide framing from the topic, subject, and attached media. Apply a classic factor ONLY when it improves the hook visual for THIS case.",
+    "FRAMING FOR THIS VARIANT (use it — do not default to a centered presenter plate):",
+    "Build the scene so this factor is visible at phone size. Adapt staging to the factor rather than ignoring it.",
   ];
 
   if (preferred) {
     lines.push(
-      `Preferred candidate for THIS variant if it fits: ${preferred.label} — ${preferred.prompt}`,
+      `Required factor for THIS variant: ${preferred.label} — ${preferred.prompt}`,
       `Use it when: ${preferred.whenToUse}`,
-      `Skip it when: ${preferred.whenToSkip}`
+      `Skip it ONLY when it would crop eyes or the primary product silhouette: ${preferred.whenToSkip}`
     );
   }
 

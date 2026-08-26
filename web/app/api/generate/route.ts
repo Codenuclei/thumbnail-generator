@@ -17,6 +17,7 @@ import {
 } from "@/lib/palette-suggestions";
 import { openingFramesAsAssets } from "@/lib/opening-frames";
 import { COMPOSITION_FACTORS } from "@/lib/composition-factors";
+import { stagingRecipeForIndex } from "@/lib/staging-recipes";
 import { suggestTitlesForVariants } from "@/lib/variant-titles";
 import type { StyleBrief } from "@/lib/style-intelligence";
 import type { ThumbnailFeedback, InspirationVideo } from "@/lib/inspiration";
@@ -36,12 +37,14 @@ export const dynamic = "force-dynamic";
 
 // Auto mode sticks to single-scene layouts — split/data collages only render
 // when the user explicitly picks them (they read as odd, disjointed thumbs).
-const VARIANT_COMPOSITIONS = ["center", "cutout"] as const;
+const VARIANT_COMPOSITIONS = ["tight", "center", "wide", "cutout"] as const;
 const COMPOSITION_LAYOUT_LABELS: Record<string, string> = {
   center: "Center hero",
   cutout: "Cutout + scene",
   split: "Split comparison",
   data: "Data overlay",
+  tight: "Extreme close",
+  wide: "Place + scale",
 };
 const DEFAULT_FACTOR_IDS = ["rule-of-thirds", "diagonal", "golden-spiral", "pyramid"];
 export async function POST(req: NextRequest) {
@@ -322,8 +325,8 @@ export async function POST(req: NextRequest) {
     const factorPool =
       compositionFactors.length > 0 ? compositionFactors : DEFAULT_FACTOR_IDS;
 
-    // Build 4 combinations: DISTINCT palette × layout × camera × type.
-    // Subject activity stays optional and evidence-led inside buildUltraPrompt.
+    // Distinct palette × layout × camera × type × staging recipe.
+    // Each slot gets an exclusive story beat so siblings do not clone one pose.
     // Never pad by repeating the same palette box — rotate accents if short.
     const palettesForVariants: ColorPaletteOption[] = [];
     if (selectedPalette) palettesForVariants.push(selectedPalette);
@@ -364,6 +367,7 @@ export async function POST(req: NextRequest) {
           : VARIANT_COMPOSITIONS[i % VARIANT_COMPOSITIONS.length];
       const cam = cameraFilterForIndex(i);
       const typeVariant = typographyVariantForIndex(i);
+      const staging = stagingRecipeForIndex(i);
       const factorId = factorPool[i % factorPool.length];
       const factorMeta = COMPOSITION_FACTORS.find((f) => f.id === factorId);
       const brief = applyPaletteToBrief(styleBrief, palette);
@@ -379,6 +383,8 @@ export async function POST(req: NextRequest) {
         feedback,
         cameraFilterIndex: i,
         typographyVariantIndex: i,
+        stagingRecipeIndex: i,
+        variantCount,
         masterPrompt,
         // Full menu + preferred hint — AI decides if the factor fits this case
         compositionFactors: factorPool,
@@ -398,7 +404,7 @@ export async function POST(req: NextRequest) {
       });
       return {
         id: `v${i + 1}`,
-        label: `${palette?.name || "Combo"} · ${COMPOSITION_LAYOUT_LABELS[comp] || comp} · ${typeVariant.label}`,
+        label: `${palette?.name || "Combo"} · ${staging.label} · ${COMPOSITION_LAYOUT_LABELS[comp] || comp} · ${typeVariant.label}`,
         paletteId: palette?.id,
         paletteName: palette?.name,
         composition: comp,
@@ -407,6 +413,8 @@ export async function POST(req: NextRequest) {
         cameraFilterLabel: cam.label,
         compositionFactor: factorId,
         compositionFactorLabel: factorMeta?.label || factorId,
+        stagingRecipe: staging.id,
+        stagingLabel: staging.label,
         typographyZoneId: typeVariant.zoneId,
         prompt,
       };
@@ -518,6 +526,8 @@ export async function POST(req: NextRequest) {
         cameraFilterLabel: spec?.cameraFilterLabel,
         compositionFactor: spec?.compositionFactor,
         compositionFactorLabel: spec?.compositionFactorLabel,
+        stagingRecipe: spec?.stagingRecipe,
+        stagingLabel: spec?.stagingLabel,
         compositionLabel: spec?.compositionLabel,
         paletteName: spec?.paletteName,
         label: labeled,
