@@ -90,6 +90,8 @@ export type VariantSpec = {
   stagingLabel?: string;
   suggestedTitle?: string;
   typographyZoneId?: PlacementZoneId;
+  /** Per-slot OpenRouter model (Best-stack routing). */
+  model?: string;
 };
 
 export type VariantImage = {
@@ -601,7 +603,7 @@ export async function generateThumbnailVariants(
     try {
       const img = await generateOneVariant(v, {
         ...options,
-        model: modelOverride ?? options.model,
+        model: modelOverride ?? v.model ?? options.model,
         budgetMs: left,
       });
       succeeded.set(v.id, img);

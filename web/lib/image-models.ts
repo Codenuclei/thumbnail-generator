@@ -17,7 +17,7 @@ export type ImageModelOption = {
 };
 
 /** Default when the picker is "default" / empty. */
-export const DEFAULT_IMAGE_MODEL = "google/gemini-2.5-flash-image";
+export const DEFAULT_IMAGE_MODEL = "google/gemini-3.1-flash-image";
 
 /** Fallback used when a selected model keeps failing under load. */
 export const FALLBACK_IMAGE_MODEL = DEFAULT_IMAGE_MODEL;
@@ -26,7 +26,7 @@ export const FALLBACK_IMAGE_MODEL = DEFAULT_IMAGE_MODEL;
 export const IMAGE_MODELS: ImageModelOption[] = [
   {
     value: "default",
-    label: "Gemini 2.5 Flash Image (default)",
+    label: "Nano Banana 2 (default)",
     shortLabel: "Default",
   },
   {

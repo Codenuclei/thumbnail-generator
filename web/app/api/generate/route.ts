@@ -18,6 +18,7 @@ import {
 import { openingFramesAsAssets } from "@/lib/opening-frames";
 import { COMPOSITION_FACTORS } from "@/lib/composition-factors";
 import { stagingRecipeForIndex } from "@/lib/staging-recipes";
+import { isAutoStackModel, resolveSlotModel } from "@/lib/model-route";
 import { suggestTitlesForVariants } from "@/lib/variant-titles";
 import type { StyleBrief } from "@/lib/style-intelligence";
 import type { ThumbnailFeedback, InspirationVideo } from "@/lib/inspiration";
@@ -55,7 +56,9 @@ export async function POST(req: NextRequest) {
     const hook =
       typeof body.hook === "string" ? String(body.hook).trim() : undefined;
     const composition = body.composition ? String(body.composition) : undefined;
-    const model = body.model ? String(body.model) : undefined;
+    const rawModel = body.model ? String(body.model) : undefined;
+    const autoStack = isAutoStackModel(rawModel);
+    const model = autoStack ? undefined : rawModel;
     const inspirations = Array.isArray(body.inspirations) ? body.inspirations : [];
     const feedback = Array.isArray(body.feedback) ? (body.feedback as ThumbnailFeedback[]) : [];
     const styleBrief = body.styleBrief as StyleBrief | undefined;
@@ -223,6 +226,7 @@ export async function POST(req: NextRequest) {
         topicContext: effectiveTopicContext,
         selectedPalette,
         selectedRefCount: selectedIds.size,
+        imageModel: resolveSlotModel(rawModel, 0),
       });
       const result = await generateWithVerification(
         prompt,
@@ -233,7 +237,7 @@ export async function POST(req: NextRequest) {
           allowSplit: composition === "split",
           typographyZoneId: typographyVariantForIndex(0).zoneId,
         },
-        { model, imageSize, assets: allAssets, budgetMs: 150_000 }
+        { model: resolveSlotModel(rawModel, 0), imageSize, assets: allAssets, budgetMs: 150_000 }
       );
       return NextResponse.json({
         image: result.imageBase64,
@@ -359,6 +363,46 @@ export async function POST(req: NextRequest) {
       rotateIdx += 1;
     }
 
+    const paletteLooksAuto = (id: string) =>
+      /^(extracted-|media-|channel-|from-thumbs)/i.test(id) ||
+      id.includes("-rot-");
+    const paletteLockedByUser = Boolean(
+      selectedPalette?.id &&
+        !paletteLooksAuto(selectedPalette.id) &&
+        selectedPalette.id !== "channel-identity"
+    );
+    if (
+      channelProfile?.colorPalette?.length &&
+      !paletteLockedByUser
+    ) {
+      const channelPal: ColorPaletteOption = {
+        id: "channel-identity",
+        name: channelProfile.channelName || "Channel",
+        colors: channelProfile.colorPalette.slice(0, 6),
+        rationale: `Channel identity for ${channelProfile.channelName}`,
+        sourceVideoIds: [],
+      };
+      palettesForVariants.length = 0;
+      palettesForVariants.push(channelPal);
+      let cRot = 0;
+      while (palettesForVariants.length < variantCount) {
+        const colors = [...channelPal.colors];
+        const rotated = [
+          colors[(cRot + 1) % colors.length],
+          colors[(cRot + 2) % colors.length],
+          colors[(cRot + 3) % colors.length],
+          colors[cRot % colors.length],
+        ].filter(Boolean);
+        palettesForVariants.push({
+          ...channelPal,
+          id: `channel-identity-rot-${cRot + 1}`,
+          name: `${channelPal.name} · alt ${cRot + 1}`,
+          colors: rotated.length ? rotated : colors,
+        });
+        cRot += 1;
+      }
+    }
+
     const variantSpecs = Array.from({ length: variantCount }, (_, i) => {
       const palette = palettesForVariants[i];
       const comp =
@@ -375,6 +419,7 @@ export async function POST(req: NextRequest) {
         brief && !(hook && hook.length)
           ? { ...brief, suggestedHook: undefined }
           : brief;
+      const slotModel = resolveSlotModel(rawModel, i);
       const prompt = buildUltraPrompt(topic, {
         hook: hook ?? "",
         composition: comp,
@@ -386,7 +431,6 @@ export async function POST(req: NextRequest) {
         stagingRecipeIndex: i,
         variantCount,
         masterPrompt,
-        // Full menu + preferred hint — AI decides if the factor fits this case
         compositionFactors: factorPool,
         compositionFactorHint: factorId,
         useOpeningFrames: useOpeningFrames && openingAssets.length > 0,
@@ -401,6 +445,8 @@ export async function POST(req: NextRequest) {
         selectedRefCount: selectedIds.size,
         seedVariantNote: seedVariant?.note,
         seedVariantLabel: seedVariant?.label,
+        imageModel: slotModel,
+        paletteLockedByUser,
       });
       return {
         id: `v${i + 1}`,
@@ -417,6 +463,7 @@ export async function POST(req: NextRequest) {
         stagingLabel: staging.label,
         typographyZoneId: typeVariant.zoneId,
         prompt,
+        model: slotModel,
       };
     });
 
