@@ -1581,6 +1581,7 @@ export default function Home() {
       toast.error(msg);
     } finally {
       setSearching(false);
+      setSearchProgress((p) => (p >= 100 ? 100 : 0));
     }
   }
 

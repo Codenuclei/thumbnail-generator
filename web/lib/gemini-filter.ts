@@ -687,6 +687,8 @@ export async function gateThumbnailContent(
     visionLimit?: number;
     batchSize?: number;
     apiKey?: string;
+    /** Stop vision batches after this many ms and fail-open the rest (metadata NSFW only). */
+    deadlineMs?: number;
   }
 ): Promise<ContentGateSummary> {
   const topic = options.topic.trim();
@@ -695,8 +697,12 @@ export async function gateThumbnailContent(
     options.apiKey || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   const adultQuery =
     options.adultQuery ?? (await detectAdultOrientedQuery(apiKey, topic, hook));
-  const visionLimit = Math.min(options.visionLimit ?? 64, videos.length);
+  const visionLimit = Math.min(options.visionLimit ?? 24, videos.length);
   const batchSize = Math.max(4, Math.min(options.batchSize ?? 8, 12));
+  const deadlineAt =
+    typeof options.deadlineMs === "number"
+      ? Date.now() + Math.max(8_000, options.deadlineMs)
+      : Date.now() + 45_000;
 
   const allowed: ScrapedVideo[] = [];
   const rejected: RejectedVideo[] = [];
@@ -711,6 +717,22 @@ export async function gateThumbnailContent(
 
   if (apiKey && visionPool.length) {
     for (let i = 0; i < visionPool.length; i += batchSize) {
+      if (Date.now() >= deadlineAt) {
+        console.warn(
+          `[gemini-filter] contentGate deadline — metadata fail-open for ${visionPool.length - i} remaining`
+        );
+        for (const v of visionPool.slice(i)) {
+          const nsfwMeta = looksLikeNsfwMetadata(v.title, v.description);
+          verdicts.set(v.videoId, {
+            id: v.videoId,
+            allow: !(nsfwMeta && !adultQuery),
+            reasons: nsfwMeta && !adultQuery ? ["nsfw metadata (deadline)"] : ["deadline fail-open"],
+            codes: nsfwMeta && !adultQuery ? ["nsfw"] : [],
+            confidence: "low",
+          });
+        }
+        break;
+      }
       const batch = visionPool.slice(i, i + batchSize);
       const batchVerdicts = await visionGateBatch(apiKey, batch, {
         topic,

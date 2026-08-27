@@ -8,6 +8,7 @@ import {
   LIGHT_FILTER_POOL,
   LIGHT_FILTER_RESULTS,
   gateThumbnailContent,
+  looksLikeNsfwMetadata,
   resolveTopicContext,
   type ContentGateSummary,
   type GeminiFilterMode,
@@ -157,6 +158,8 @@ async function gatePoolForDisplay(
     topic: options.title,
     hook: options.hook,
     topicContext: options.topicContext,
+    visionLimit: 24,
+    deadlineMs: 45_000,
   });
 
   const results = contentGate.allowed;
@@ -233,6 +236,19 @@ export async function runSearchPipeline(
       );
     }
 
+    // Show metadata-safe thumbs immediately — the vision gate can take longer
+    // than the stream budget and used to leave the Research grid empty at 80%.
+    const quickAllowed = pool.filter(
+      (v) => !looksLikeNsfwMetadata(v.title, v.description)
+    );
+    if (quickAllowed.length) {
+      emit({
+        type: "candidates",
+        count: quickAllowed.length,
+        videos: quickAllowed.slice(0, Math.min(minResults, quickAllowed.length)),
+      });
+    }
+
     const topicContext = await gatherTopicContext(title, hook, emit);
     const gated = await gatePoolForDisplay(pool, {
       title,
@@ -242,9 +258,14 @@ export async function runSearchPipeline(
     });
 
     if (!gated.results.length) {
-      throw new Error(
-        "All thumbnails were blocked by the content safety gate — try a different query."
-      );
+      if (quickAllowed.length) {
+        gated.results.push(...quickAllowed);
+        gated.filterSummary = `Showing ${quickAllowed.length} YouTube results (safety gate timed out — metadata filter only)`;
+      } else {
+        throw new Error(
+          "All thumbnails were blocked by the content safety gate — try a different query."
+        );
+      }
     }
 
     const titles = gated.results.slice(0, 8).map((v) => v.title);
@@ -308,6 +329,17 @@ export async function runSearchPipeline(
     );
   }
 
+  const quickAllowedStrict = pool.filter(
+    (v) => !looksLikeNsfwMetadata(v.title, v.description)
+  );
+  if (quickAllowedStrict.length) {
+    emit({
+      type: "candidates",
+      count: quickAllowedStrict.length,
+      videos: quickAllowedStrict.slice(0, Math.min(24, quickAllowedStrict.length)),
+    });
+  }
+
   emit({ type: "status", step: "map", message: "Mapping thumbnails to opening scripts…" });
   const mappings = await buildVideoMappings(pool.slice(0, minResults), title, 8);
   emit({ type: "mappings", mappings });
@@ -321,9 +353,14 @@ export async function runSearchPipeline(
   });
 
   if (!gated.results.length) {
-    throw new Error(
-      "All thumbnails were blocked by the content safety gate — try a different query."
-    );
+    if (quickAllowedStrict.length) {
+      gated.results.push(...quickAllowedStrict);
+      gated.filterSummary = `Showing ${quickAllowedStrict.length} YouTube results (safety gate timed out — metadata filter only)`;
+    } else {
+      throw new Error(
+        "All thumbnails were blocked by the content safety gate — try a different query."
+      );
+    }
   }
 
   const titles = gated.results.slice(0, 8).map((v) => v.title);
